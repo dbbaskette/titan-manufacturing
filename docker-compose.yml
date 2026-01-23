@@ -1,0 +1,364 @@
+version: '3.8'
+
+# =============================================================================
+# TITAN MANUFACTURING — Titan 5.0 AI Platform
+# "Forging the future with intelligent manufacturing"
+# =============================================================================
+# Simplified architecture: Greenplum as single data store
+# RabbitMQ provides both AMQP and MQTT (via plugin)
+# =============================================================================
+
+services:
+  # ===========================================================================
+  # CORE INFRASTRUCTURE (Increment 1)
+  # ===========================================================================
+
+  # Greenplum - Single unified database for all data
+  # Using full image with all extensions (pgvector, PostGIS, MADlib, etc.)
+  greenplum:
+    image: greenplum-sne-full
+    container_name: titan-greenplum
+    hostname: greenplum-sne
+    ports:
+      - "15432:5432"
+    environment:
+      - PGPASSWORD=VMware1!
+    volumes:
+      - ./config/greenplum/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "su - gpadmin -c '/usr/local/greenplum-db/bin/psql -U gpadmin -d postgres -c \"SELECT 1\"' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    networks:
+      - titan-network
+
+  # RabbitMQ - Message broker with MQTT plugin enabled
+  # Provides both AMQP (5672) and MQTT (1883) protocols
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: titan-rabbitmq
+    ports:
+      - "5672:5672"     # AMQP
+      - "15672:15672"   # Management UI
+      - "1883:1883"     # MQTT (via plugin)
+    environment:
+      - RABBITMQ_DEFAULT_USER=titan
+      - RABBITMQ_DEFAULT_PASS=titan5.0
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+      - ./config/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - titan-network
+
+  # ===========================================================================
+  # TITAN 5.0 ORCHESTRATOR (Increment 2+)
+  # ===========================================================================
+  titan-orchestrator:
+    build: ./titan-orchestrator
+    container_name: titan-orchestrator
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      # Use Ollama via OpenAI-compatible endpoint
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL:-http://host.docker.internal:11434}
+      - OPENAI_MODEL=${OPENAI_MODEL:-llama3.1:8b}
+      - OPENAI_TEMPERATURE=${OPENAI_TEMPERATURE:-0.7}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - DEFAULT_LLM=${DEFAULT_LLM:-gpt-4.1}
+      # MCP Server connections
+      - MCP_SERVERS_SENSOR=http://sensor-mcp-server:8081
+      - MCP_SERVERS_MAINTENANCE=http://maintenance-mcp-server:8082
+      - MCP_SERVERS_INVENTORY=http://inventory-mcp-server:8083
+      - MCP_SERVERS_LOGISTICS=http://logistics-mcp-server:8084
+      - MCP_SERVERS_ORDER=http://order-mcp-server:8085
+      - MCP_SERVERS_COMMUNICATIONS=http://communications-mcp-server:8086
+      - MCP_SERVERS_GOVERNANCE=http://governance-mcp-server:8087
+    depends_on:
+      greenplum:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - titan-network
+    profiles:
+      - orchestrator
+
+  # ===========================================================================
+  # MCP AGENT SERVERS (Increment 2+)
+  # ===========================================================================
+  sensor-mcp-server:
+    build: ./sensor-mcp-server
+    container_name: titan-sensor-agent
+    hostname: sensor-mcp-server
+    ports:
+      - "8081:8081"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - GREENPLUM_URL=jdbc:postgresql://greenplum:5432/postgres
+      - GREENPLUM_USER=gpadmin
+      - GREENPLUM_PASSWORD=VMware1!
+      - MQTT_BROKER=tcp://rabbitmq:1883
+    depends_on:
+      greenplum:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - titan-network
+    profiles:
+      - agents
+
+  maintenance-mcp-server:
+    build: ./maintenance-mcp-server
+    container_name: titan-maintenance-agent
+    ports:
+      - "8082:8082"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - GREENPLUM_URL=jdbc:postgresql://greenplum:5432/postgres
+      - GREENPLUM_USER=gpadmin
+      - GREENPLUM_PASSWORD=VMware1!
+    depends_on:
+      greenplum:
+        condition: service_healthy
+    networks:
+      - titan-network
+    profiles:
+      - agents
+
+  inventory-mcp-server:
+    build: ./inventory-mcp-server
+    container_name: titan-inventory-agent
+    ports:
+      - "8083:8083"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - GREENPLUM_URL=jdbc:postgresql://greenplum:5432/postgres
+      - GREENPLUM_USER=gpadmin
+      - GREENPLUM_PASSWORD=VMware1!
+    depends_on:
+      greenplum:
+        condition: service_healthy
+    networks:
+      - titan-network
+    profiles:
+      - agents
+
+  logistics-mcp-server:
+    build: ./logistics-mcp-server
+    container_name: titan-logistics-agent
+    ports:
+      - "8084:8084"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - GREENPLUM_URL=jdbc:postgresql://greenplum:5432/postgres
+      - GREENPLUM_USER=gpadmin
+      - GREENPLUM_PASSWORD=VMware1!
+    depends_on:
+      greenplum:
+        condition: service_healthy
+    networks:
+      - titan-network
+    profiles:
+      - agents
+
+  order-mcp-server:
+    build: ./order-mcp-server
+    container_name: titan-order-agent
+    ports:
+      - "8085:8085"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - GREENPLUM_URL=jdbc:postgresql://greenplum:5432/postgres
+      - GREENPLUM_USER=gpadmin
+      - GREENPLUM_PASSWORD=VMware1!
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_USER=titan
+      - RABBITMQ_PASS=titan5.0
+    depends_on:
+      greenplum:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - titan-network
+    profiles:
+      - agents
+
+  communications-mcp-server:
+    build: ./communications-mcp-server
+    container_name: titan-comms-agent
+    ports:
+      - "8086:8086"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - GREENPLUM_URL=jdbc:postgresql://greenplum:5432/postgres
+      - GREENPLUM_USER=gpadmin
+      - GREENPLUM_PASSWORD=VMware1!
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    depends_on:
+      greenplum:
+        condition: service_healthy
+    networks:
+      - titan-network
+    profiles:
+      - agents
+
+  governance-mcp-server:
+    build: ./governance-mcp-server
+    container_name: titan-governance-agent
+    ports:
+      - "8087:8087"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - OPENMETADATA_URL=http://openmetadata:8585
+      - OPENMETADATA_TOKEN=${OPENMETADATA_TOKEN:-}
+    depends_on:
+      openmetadata:
+        condition: service_healthy
+    networks:
+      - titan-network
+    profiles:
+      - governance
+
+  # ===========================================================================
+  # OPENMETADATA STACK (Increment 6 - Data Governance)
+  # Requires ~6GB RAM. Enable with: docker-compose --profile governance up
+  # ===========================================================================
+  openmetadata:
+    image: openmetadata/server:1.3.1
+    container_name: titan-openmetadata
+    ports:
+      - "8585:8585"
+    environment:
+      - OPENMETADATA_CLUSTER_NAME=titan-manufacturing
+      - DB_HOST=openmetadata-mysql
+      - DB_PORT=3306
+      - DB_USER=openmetadata
+      - DB_USER_PASSWORD=openmetadata
+      - DB_DRIVER_CLASS=com.mysql.cj.jdbc.Driver
+      - SEARCH_HOST=openmetadata-elasticsearch
+      - SEARCH_PORT=9200
+      - SEARCH_SCHEME=http
+    depends_on:
+      openmetadata-mysql:
+        condition: service_healthy
+      openmetadata-elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8585/api/v1/system/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+    networks:
+      - titan-network
+    profiles:
+      - governance
+
+  openmetadata-mysql:
+    image: mysql:8.0
+    container_name: titan-openmetadata-mysql
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_DATABASE=openmetadata
+      - MYSQL_USER=openmetadata
+      - MYSQL_PASSWORD=openmetadata
+    volumes:
+      - openmetadata-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - titan-network
+    profiles:
+      - governance
+
+  openmetadata-elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.16.3
+    container_name: titan-openmetadata-es
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    volumes:
+      - openmetadata-es-data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q '\"status\":\"green\"\\|\"status\":\"yellow\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - titan-network
+    profiles:
+      - governance
+
+  # ===========================================================================
+  # OBSERVABILITY (Optional)
+  # Enable with: docker-compose --profile observability up
+  # ===========================================================================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: titan-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=titan5.0
+    volumes:
+      - grafana-data:/var/lib/grafana
+    networks:
+      - titan-network
+    profiles:
+      - observability
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: titan-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - prometheus-data:/prometheus
+    networks:
+      - titan-network
+    profiles:
+      - observability
+
+  # ===========================================================================
+  # TITAN DASHBOARD (Increment 7)
+  # ===========================================================================
+  titan-dashboard:
+    build: ./titan-dashboard
+    container_name: titan-dashboard
+    ports:
+      - "3001:3000"
+    environment:
+      - REACT_APP_ORCHESTRATOR_URL=http://localhost:8080
+      - REACT_APP_OPENMETADATA_URL=http://localhost:8585
+    depends_on:
+      - titan-orchestrator
+    networks:
+      - titan-network
+    profiles:
+      - dashboard
+
+networks:
+  titan-network:
+    driver: bridge
+
+volumes:
+  rabbitmq-data:
+  grafana-data:
+  prometheus-data:
+  openmetadata-mysql-data:
+  openmetadata-es-data:

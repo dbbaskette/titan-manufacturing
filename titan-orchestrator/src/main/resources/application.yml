@@ -1,0 +1,90 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: titan-orchestrator
+
+  # Spring AI configuration
+  ai:
+    openai:
+      api-key: ${OPENAI_API_KEY:ollama}
+      base-url: ${OPENAI_BASE_URL:http://localhost:11434}
+      chat:
+        options:
+          model: ${OPENAI_MODEL:llama3.1:8b}
+          temperature: ${OPENAI_TEMPERATURE:0.7}
+    anthropic:
+      api-key: ${ANTHROPIC_API_KEY:}
+      chat:
+        options:
+          model: ${ANTHROPIC_MODEL:claude-sonnet-4-20250514}
+          temperature: 0.3
+    ollama:
+      base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+      chat:
+        options:
+          model: ${OLLAMA_MODEL:llama3.1:8b}
+          temperature: ${OLLAMA_TEMPERATURE:0.7}
+    mcp:
+      client:
+        enabled: true
+        type: SYNC
+        request-timeout: 120s
+        toolcallback:
+          enabled: true
+        streamable-http:
+          connections:
+            sensor-tools:
+              url: ${MCP_SERVERS_SENSOR:http://localhost:8081}
+              endpoint: /mcp
+            # Future MCP servers (uncomment as they're implemented):
+            # maintenance-tools:
+            #   url: ${MCP_SERVERS_MAINTENANCE:http://localhost:8082}
+            #   endpoint: /mcp
+            # inventory-tools:
+            #   url: ${MCP_SERVERS_INVENTORY:http://localhost:8083}
+            #   endpoint: /mcp
+            # logistics-tools:
+            #   url: ${MCP_SERVERS_LOGISTICS:http://localhost:8084}
+            #   endpoint: /mcp
+            # order-tools:
+            #   url: ${MCP_SERVERS_ORDER:http://localhost:8085}
+            #   endpoint: /mcp
+            # communications-tools:
+            #   url: ${MCP_SERVERS_COMMUNICATIONS:http://localhost:8086}
+            #   endpoint: /mcp
+            # governance-tools:
+            #   url: ${MCP_SERVERS_GOVERNANCE:http://localhost:8087}
+            #   endpoint: /mcp
+
+# Embabel agent configuration
+embabel:
+  models:
+    default-llm: ${DEFAULT_LLM:gpt-4.1}
+  agent:
+    platform:
+      scanning:
+        packages: com.embabel.agent,com.titan.orchestrator
+
+# Actuator/Management endpoints
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+# Logging
+logging:
+  level:
+    com.titan: ${LOG_LEVEL:INFO}
+    com.embabel: INFO
+    org.springframework.ai: DEBUG
+    org.springframework.ai.openai: TRACE
+    org.springframework.web.client: TRACE

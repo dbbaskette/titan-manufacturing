@@ -1,0 +1,50 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: titan-sensor-agent
+  datasource:
+    url: ${GREENPLUM_URL:jdbc:postgresql://localhost:15432/postgres}
+    username: ${GREENPLUM_USER:gpadmin}
+    password: ${GREENPLUM_PASSWORD:VMware1!}
+    driver-class-name: org.postgresql.Driver
+  ai:
+    mcp:
+      server:
+        name: sensor-agent
+        version: 1.0.0
+        type: SYNC
+        protocol: STATELESS
+        stateless:
+          mcp-endpoint: /mcp
+        instructions: |
+          Sensor Agent - Monitors IoT sensor data from 600+ CNC machines across 12 Titan Manufacturing facilities.
+
+          Available tools:
+          - list_equipment: List all equipment at a facility or across all facilities
+          - get_equipment_status: Get current health status of specific equipment
+          - get_sensor_readings: Get historical sensor readings for equipment
+          - get_facility_status: Get overview of all equipment health at a facility
+          - detect_anomaly: Check for anomalies in sensor readings
+
+          Key equipment to monitor:
+          - PHX-CNC-007: Phoenix facility CNC machine with known vibration degradation pattern
+        capabilities:
+          tool: true
+          resource: false
+          prompt: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.titan.sensor: DEBUG
+    org.springframework.ai.mcp: DEBUG
