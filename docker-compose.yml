@@ -103,10 +103,13 @@ services:
       - "8081:8081"
     environment:
       - SPRING_PROFILES_ACTIVE=docker
-      - GREENPLUM_URL=jdbc:postgresql://greenplum:5432/postgres
+      - GREENPLUM_URL=jdbc:postgresql://greenplum:5432/titan-manufacturing
       - GREENPLUM_USER=gpadmin
       - GREENPLUM_PASSWORD=VMware1!
       - MQTT_BROKER=tcp://rabbitmq:1883
+      - MQTT_USER=titan
+      - MQTT_PASS=titan5.0
+      - MQTT_ENABLED=true
     depends_on:
       greenplum:
         condition: service_healthy
@@ -124,7 +127,7 @@ services:
       - "8082:8082"
     environment:
       - SPRING_PROFILES_ACTIVE=docker
-      - GREENPLUM_URL=jdbc:postgresql://greenplum:5432/postgres
+      - GREENPLUM_URL=jdbc:postgresql://greenplum:5432/titan-manufacturing
       - GREENPLUM_USER=gpadmin
       - GREENPLUM_PASSWORD=VMware1!
     depends_on:
@@ -135,6 +138,27 @@ services:
     profiles:
       - agents
 
+  sensor-data-generator:
+    build: ./sensor-data-generator
+    container_name: titan-sensor-generator
+    ports:
+      - "8090:8090"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - MQTT_BROKER=tcp://rabbitmq:1883
+      - MQTT_USER=titan
+      - MQTT_PASS=titan5.0
+      - EQUIPMENT_COUNT=30
+      - FACILITIES=PHX,MUC,SHA,DET,ATL
+      - INTERVAL_MS=5000
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - titan-network
+    profiles:
+      - generator
+
   inventory-mcp-server:
     build: ./inventory-mcp-server
     container_name: titan-inventory-agent
@@ -142,7 +166,7 @@ services:
       - "8083:8083"
     environment:
       - SPRING_PROFILES_ACTIVE=docker
-      - GREENPLUM_URL=jdbc:postgresql://greenplum:5432/postgres
+      - GREENPLUM_URL=jdbc:postgresql://greenplum:5432/titan-manufacturing
       - GREENPLUM_USER=gpadmin
       - GREENPLUM_PASSWORD=VMware1!
     depends_on:
@@ -160,7 +184,7 @@ services:
       - "8084:8084"
     environment:
       - SPRING_PROFILES_ACTIVE=docker
-      - GREENPLUM_URL=jdbc:postgresql://greenplum:5432/postgres
+      - GREENPLUM_URL=jdbc:postgresql://greenplum:5432/titan-manufacturing
       - GREENPLUM_USER=gpadmin
       - GREENPLUM_PASSWORD=VMware1!
     depends_on:
@@ -178,7 +202,7 @@ services:
       - "8085:8085"
     environment:
       - SPRING_PROFILES_ACTIVE=docker
-      - GREENPLUM_URL=jdbc:postgresql://greenplum:5432/postgres
+      - GREENPLUM_URL=jdbc:postgresql://greenplum:5432/titan-manufacturing
       - GREENPLUM_USER=gpadmin
       - GREENPLUM_PASSWORD=VMware1!
       - RABBITMQ_HOST=rabbitmq
@@ -201,7 +225,7 @@ services:
       - "8086:8086"
     environment:
       - SPRING_PROFILES_ACTIVE=docker
-      - GREENPLUM_URL=jdbc:postgresql://greenplum:5432/postgres
+      - GREENPLUM_URL=jdbc:postgresql://greenplum:5432/titan-manufacturing
       - GREENPLUM_USER=gpadmin
       - GREENPLUM_PASSWORD=VMware1!
       - OPENAI_API_KEY=${OPENAI_API_KEY}

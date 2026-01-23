@@ -87,4 +87,39 @@ public class McpToolGroupsConfiguration {
             }
         );
     }
+
+    /**
+     * Maintenance tools from the Maintenance MCP Server.
+     * Provides predictive maintenance, RUL estimation, and work order scheduling.
+     * Enables the Phoenix Incident demo scenario.
+     */
+    @Bean
+    public ToolGroup maintenanceToolGroup() {
+        log.info(">>> Creating maintenance-tools ToolGroup bean");
+        return new McpToolGroup(
+            ToolGroupDescription.Companion.invoke(
+                "Titan Manufacturing predictive maintenance tools for failure prediction, " +
+                "remaining useful life (RUL) estimation, and maintenance scheduling. " +
+                "Enables Phoenix Incident scenario with 73% failure probability detection on PHX-CNC-007.",
+                "maintenance-tools"  // role - must match @Action toolGroups value
+            ),
+            "maintenance-tools",           // name
+            "TITAN-MAINTENANCE-MCP",       // provider
+            Set.of(ToolGroupPermission.HOST_ACCESS),
+            mcpSyncClients,
+            tool -> {
+                String toolName = tool.getToolDefinition().name();
+                // Include all maintenance-related tools
+                return toolName.equals("predict_failure") ||
+                       toolName.equals("estimate_rul") ||
+                       toolName.equals("schedule_maintenance") ||
+                       toolName.equals("get_maintenance_history") ||
+                       // Also match camelCase variants
+                       toolName.equals("predictFailure") ||
+                       toolName.equals("estimateRul") ||
+                       toolName.equals("scheduleMaintenance") ||
+                       toolName.equals("getMaintenanceHistory");
+            }
+        );
+    }
 }

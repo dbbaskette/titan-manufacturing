@@ -79,9 +79,13 @@ flowchart TB
         GOV[Governance Agent<br/>:8087]
     end
 
+    subgraph IoT["IoT Data Pipeline"]
+        GEN[Sensor Generator<br/>:8090]
+    end
+
     subgraph Data["Data Layer"]
-        GP[(Greenplum<br/>pgvector)]
-        RMQ[RabbitMQ<br/>MQTT]
+        GP[(Greenplum<br/>pgvector + ML)]
+        RMQ[RabbitMQ<br/>MQTT Plugin]
         OM[OpenMetadata<br/>Catalog]
     end
 
@@ -102,8 +106,9 @@ flowchart TB
     MCP_C <-->|MCP Protocol| COMM
     MCP_C <-->|MCP Protocol| GOV
 
+    GEN -->|MQTT| RMQ
+    RMQ -->|MQTT| SENS
     SENS --> GP
-    SENS --> RMQ
     MAINT --> GP
     INV --> GP
     LOG --> GP
@@ -120,7 +125,7 @@ flowchart TB
 | Agent | Role | MCP Tools | Status |
 |-------|------|-----------|--------|
 | **Sensor Agent** | IoT data from 600+ CNC machines | `list_equipment`, `get_equipment_status`, `get_sensor_readings`, `get_facility_status`, `detect_anomaly` | Complete |
-| **Maintenance Agent** | Predictive maintenance & RUL | `predict_failure`, `estimate_rul`, `schedule_maintenance` | Planned |
+| **Maintenance Agent** | Predictive maintenance & RUL | `predict_failure`, `estimate_rul`, `schedule_maintenance`, `get_maintenance_history` | Complete |
 | **Inventory Agent** | 50K+ SKU management | `check_stock`, `search_products`, `calculate_reorder` | Planned |
 | **Logistics Agent** | Global shipping optimization | `plan_route`, `select_carrier`, `predict_eta` | Planned |
 | **Order Agent** | B2B order fulfillment | `validate_order`, `check_availability`, `initiate_fulfillment` | Planned |
@@ -211,6 +216,8 @@ curl -X POST http://localhost:8080/api/chat \
 |---------|-----|-------------|
 | Titan API | http://localhost:8080 | - |
 | Sensor MCP Server | http://localhost:8081/mcp | - |
+| Maintenance MCP Server | http://localhost:8082/mcp | - |
+| Sensor Data Generator | http://localhost:8090 | (with `--profile generator`) |
 | RabbitMQ Management | http://localhost:15672 | titan / titan5.0 |
 | Greenplum | localhost:15432 | gpadmin / VMware1! |
 | OpenMetadata | http://localhost:8585 | (with `--profile governance`) |
@@ -225,17 +232,18 @@ curl -X POST http://localhost:8080/api/chat \
 > *"CNC-007 at the Phoenix plant is showing vibration anomalies - the same pattern that preceded the $12M incident last year..."*
 
 ```bash
+# Check equipment health and predict failure
 curl -X POST http://localhost:8080/api/chat \
   -H "Content-Type: application/json" \
-  -d '{"message": "Check for anomalies on equipment PHX-CNC-007"}'
+  -d '{"message": "Check the health of PHX-CNC-007 and predict if it will fail"}'
 ```
 
 **Expected Response:**
-- 2 anomalies detected (temperature + vibration)
-- Severity: WARNING
-- Predicted failure date within 48 hours
-- Confidence score: 0.73
-- Recommended action: Immediate inspection
+- Vibration trending up (2.5 → 4.2 mm/s)
+- ~73% failure probability (ML-based logistic regression)
+- Predicted failure within 48 hours
+- Risk level: HIGH
+- Recommended action: Schedule bearing replacement (SKU-BRG-7420)
 
 ### Scenario 2: Facility Health Overview
 
@@ -276,7 +284,7 @@ titan-manufacturing/
 │
 ├── titan-orchestrator/          # Embabel-based agent coordinator
 │   └── src/main/java/com/titan/orchestrator/
-│       ├── agent/               # TitanSensorAgent (Embabel @Agent)
+│       ├── agent/               # TitanSensorAgent, TitanMaintenanceAgent
 │       ├── config/              # McpToolGroupsConfiguration
 │       ├── controller/          # REST API endpoints
 │       └── model/               # Domain models
@@ -284,9 +292,20 @@ titan-manufacturing/
 ├── sensor-mcp-server/           # IoT sensor data MCP server
 │   └── src/main/java/com/titan/sensor/
 │       ├── service/             # SensorService (@McpTool methods)
+│       ├── mqtt/                # SensorDataConsumer (MQTT → Greenplum)
 │       └── model/               # Equipment, Anomaly, SensorReading
 │
-├── maintenance-mcp-server/      # Predictive maintenance (planned)
+├── sensor-data-generator/       # IoT sensor simulator
+│   └── src/main/java/com/titan/generator/
+│       ├── SensorDataGenerator  # Publishes readings to MQTT
+│       ├── DegradationPattern   # Failure pattern definitions
+│       └── GeneratorController  # REST API for pattern control
+│
+├── maintenance-mcp-server/      # Predictive maintenance MCP server
+│   └── src/main/java/com/titan/maintenance/
+│       ├── service/             # MaintenanceService (ML prediction)
+│       └── model/               # FailurePrediction, RulEstimate
+│
 ├── inventory-mcp-server/        # Parts & SKU management (planned)
 ├── logistics-mcp-server/        # Shipping optimization (planned)
 ├── order-mcp-server/            # B2B fulfillment (planned)
@@ -295,7 +314,7 @@ titan-manufacturing/
 ├── titan-dashboard/             # React demo UI (planned)
 │
 ├── config/
-│   ├── greenplum/init.sql       # Database schema & seed data
+│   ├── greenplum/init.sql       # Database schema, ML model, seed data
 │   └── rabbitmq/                # MQTT plugin config
 │
 └── docs/
@@ -364,7 +383,7 @@ mvn spring-boot:run
 |-----------|-----------|--------|
 | 1 | Foundation (Greenplum, RabbitMQ) | Complete |
 | 2 | Embabel Orchestrator + Sensor Agent | Complete |
-| 3 | Predictive Maintenance Agent | Planned |
+| 3 | Predictive Maintenance Agent + Sensor Data Generator | Complete |
 | 4 | Supply Chain (Inventory + Logistics) | Planned |
 | 5 | Order Fulfillment Agent | Planned |
 | 6 | Data Governance (OpenMetadata) | Planned |
@@ -378,6 +397,17 @@ mvn spring-boot:run
 - 12 facilities x ~50 CNC machines each (600+ total)
 - Equipment types: CNC-MILL, CNC-LATHE, CNC-5AX, HYD-PRESS, LASER-CUT, WELD-ROB, HEAT-TREAT, EDM, GRIND, CMM
 - Sensor readings: vibration (mm/s), temperature (C), RPM, torque (Nm), pressure (PSI)
+
+### ML-Based Predictive Maintenance
+- **Logistic regression model** with stored coefficients in Greenplum
+- **Feature engineering view** (`equipment_ml_features`) for real-time prediction
+- **Run-to-failure data** modeled after NASA C-MAPSS turbofan datasets
+- SQL functions: `predict_equipment_failure()`, `estimate_equipment_rul()`
+
+### Sensor Data Pipeline
+- **Generator** publishes sensor readings via MQTT to RabbitMQ
+- **Consumer** in sensor-mcp-server writes to Greenplum `sensor_readings` table
+- **Degradation patterns**: NORMAL, BEARING_DEGRADATION, MOTOR_BURNOUT, SPINDLE_WEAR, COOLANT_FAILURE, ELECTRICAL_FAULT
 
 ### Anomaly Detection
 - Threshold-based anomaly detection per sensor type

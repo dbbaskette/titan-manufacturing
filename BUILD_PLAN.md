@@ -7,8 +7,8 @@ This document outlines an incremental approach to building the Titan Manufacturi
 **Goal**: Create a multi-agent AI platform demonstrating Tanzu Data Intelligence capabilities for manufacturing operations.
 
 **Key Technologies**:
-- **Tanzu Products**: Greenplum 7 (pgvector) - single unified data store, RabbitMQ
-- **Open Source**: OpenMetadata, Mosquitto MQTT
+- **Tanzu Products**: Greenplum 7 (pgvector) - single unified data store, RabbitMQ (with MQTT plugin)
+- **Open Source**: OpenMetadata
 - **Orchestrator**: [Embabel Agent Framework](https://github.com/embabel/embabel-agent) (Rod Johnson's agentic flow framework)
 - **Agent Protocol**: Model Context Protocol (MCP)
 
@@ -19,8 +19,8 @@ This document outlines an incremental approach to building the Titan Manufacturi
 ## Increment Checklist
 
 - [x] **Inc 1: Foundation** - Infrastructure running, data loaded
-- [ ] **Inc 2: Core Orchestrator** - Basic agent coordination
-- [ ] **Inc 3: Predictive Maintenance** - Phoenix CNC-007 anomaly detection
+- [x] **Inc 2: Core Orchestrator** - Basic agent coordination
+- [x] **Inc 3: Predictive Maintenance** - Phoenix CNC-007 anomaly detection + sensor data generator
 - [ ] **Inc 4: Supply Chain** - Inventory queries, semantic search
 - [ ] **Inc 5: Order Fulfillment** - Boeing expedite scenario
 - [ ] **Inc 6: Data Governance** - FAA audit with lineage
@@ -40,7 +40,7 @@ Get all infrastructure running and loaded with realistic demo data.
   - Equipment registry (600+ machines across 12 facilities)
   - Sensor readings with time-series indexes
   - Orders and customers (B2B)
-- RabbitMQ and Mosquitto MQTT brokers
+- RabbitMQ (with MQTT plugin for IoT sensor data)
 - Grafana/Prometheus observability
 - OpenMetadata for data governance
 
@@ -64,7 +64,7 @@ Get all infrastructure running and loaded with realistic demo data.
 
 - [x] AI4I 2020 Predictive Maintenance patterns (vibration/temp degradation)
 - [x] DataCo SMART Supply Chain patterns (orders/inventory)
-- [ ] NASA C-MAPSS patterns (RUL training data)
+- [x] NASA C-MAPSS patterns (RUL training data in run_to_failure_data table)
 
 ---
 
@@ -88,14 +88,14 @@ Implement the central orchestrator using Embabel and first MCP agent for IoT dat
   - [x] `get_sensor_readings` - Historical sensor data
   - [x] `get_facility_status` - Facility overview
   - [x] `detect_anomaly` - Basic anomaly detection
-- [ ] MQTT subscription capability (optional real-time)
+- [x] MQTT subscription capability (SensorDataConsumer writes to Greenplum)
 
 ### Demo Scenarios
 
-- [ ] "Show me all equipment in Phoenix facility"
-- [ ] "What are the current sensor readings for PHX-CNC-007?"
-- [ ] "Which machines have temperature above 75°C?"
-- [ ] Basic anomaly detection alerts
+- [x] "Show me all equipment in Phoenix facility"
+- [x] "What are the current sensor readings for PHX-CNC-007?"
+- [x] "Which machines have temperature above 75°C?"
+- [x] Basic anomaly detection alerts
 
 ### Dependencies
 
@@ -110,29 +110,37 @@ Add predictive maintenance capabilities - the Phoenix incident scenario.
 
 ### Components
 - **maintenance-mcp-server** (Port 8082): Predictive maintenance agent
+- **sensor-data-generator** (Port 8090): IoT sensor simulator with degradation patterns
 
 ### Deliverables Checklist
 
-- [ ] Maintenance agent with MCP tools:
-  - [ ] `predict_failure` - ML-based failure probability
-  - [ ] `estimate_rul` - Remaining Useful Life estimation
-  - [ ] `schedule_maintenance` - Create work orders
-  - [ ] `get_maintenance_history` - Historical records
-- [ ] Vibration anomaly detection model
-- [ ] Temperature trend analysis
-- [ ] Integration with sensor agent data
+- [x] Maintenance agent with MCP tools:
+  - [x] `predict_failure` - ML-based failure probability (logistic regression in Greenplum)
+  - [x] `estimate_rul` - Remaining Useful Life estimation
+  - [x] `schedule_maintenance` - Create work orders
+  - [x] `get_maintenance_history` - Historical records
+- [x] ML model infrastructure in Greenplum:
+  - [x] `ml_model_coefficients` table with logistic regression weights
+  - [x] `equipment_ml_features` view for feature engineering
+  - [x] `predict_equipment_failure()` SQL function
+  - [x] `estimate_equipment_rul()` SQL function
+  - [x] `run_to_failure_data` table (NASA C-MAPSS style)
+- [x] Sensor data pipeline:
+  - [x] Generator publishes to RabbitMQ via MQTT
+  - [x] Consumer writes to Greenplum sensor_readings
+  - [x] Degradation patterns: NORMAL, BEARING_DEGRADATION, MOTOR_BURNOUT, SPINDLE_WEAR, COOLANT_FAILURE, ELECTRICAL_FAULT
 
 ### Phoenix Incident Demo
 
-- [ ] "Check the health status of PHX-CNC-007"
-- [ ] Agent detects: Vibration trending up 0.8mm/s per hour
-- [ ] Agent predicts: 73% failure probability within 48 hours
-- [ ] Agent recommends: Schedule bearing replacement (SKU-BRG-7420)
-- [ ] Shows how this prevents a $12M unplanned downtime
+- [x] "Check the health status of PHX-CNC-007"
+- [x] Agent detects: Vibration trending up (2.5→4.2 mm/s)
+- [x] Agent predicts: ~73% failure probability within 48 hours
+- [x] Agent recommends: Schedule bearing replacement (SKU-BRG-7420)
+- [x] Shows how this prevents a $12M unplanned downtime
 
 ### Dependencies
 
-- [ ] Increment 2 (orchestrator and sensor agent)
+- [x] Increment 2 (orchestrator and sensor agent)
 
 ---
 
@@ -312,11 +320,11 @@ Build the React dashboard and demonstrate full multi-agent workflows.
                                 │
               ┌─────────────────┼─────────────────┐
               │                 │                 │
-       ┌──────▼──────┐   ┌──────▼──────┐   ┌──────▼──────┐
-       │  Greenplum  │   │  RabbitMQ   │   │  Mosquitto  │
-       │   15432     │   │    5672     │   │    1883     │
-       │  (pgvector) │   │  (events)   │   │   (MQTT)    │
-       └──────┬──────┘   └─────────────┘   └─────────────┘
+       ┌──────▼──────┐   ┌──────▼──────────────────────┐
+       │  Greenplum  │   │        RabbitMQ             │
+       │   15432     │   │  5672 (AMQP) + 1883 (MQTT)  │
+       │  (pgvector) │   │    (events + IoT sensors)   │
+       └──────┬──────┘   └─────────────────────────────┘
               │
        ┌──────▼──────┐
        │ OpenMetadata│
@@ -333,8 +341,10 @@ Greenplum contains: Products, Equipment, Sensors, Orders, Customers
 - [x] Review high-level plan
 - [x] Increment 1 detailed planning
 - [x] Increment 1 data layer implementation
-- [ ] Test docker-compose startup
-- [ ] Begin Increment 2 (Embabel orchestrator)
+- [x] Test docker-compose startup
+- [x] Increment 2 (Embabel orchestrator + Sensor Agent) complete
+- [x] Increment 3 (Predictive Maintenance Agent + Sensor Data Generator) complete
+- [ ] Begin Increment 4 (Supply Chain Agents)
 
 ---
 
@@ -346,8 +356,7 @@ Greenplum contains: Products, Equipment, Sensors, Orders, Customers
 
 - [x] docker-compose.yml configured with consolidated Greenplum architecture
 - [x] Greenplum using greenplum-sne-base image (port 15432)
-- [x] RabbitMQ configured (port 5672, management 15672)
-- [x] Mosquitto MQTT configured (port 1883)
+- [x] RabbitMQ configured (port 5672, management 15672, MQTT 1883)
 - [x] OpenMetadata setup script ready
 - [ ] Test `docker-compose up -d`
 - [ ] Verify all services start correctly

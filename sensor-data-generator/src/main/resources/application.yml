@@ -1,0 +1,35 @@
+server:
+  port: 8090
+
+spring:
+  application:
+    name: titan-sensor-generator
+
+# MQTT Configuration
+mqtt:
+  broker: ${MQTT_BROKER:tcp://localhost:1883}
+  client-id: titan-sensor-generator
+  username: ${MQTT_USER:titan}
+  password: ${MQTT_PASS:titan5.0}
+
+# Generator Configuration
+generator:
+  enabled: true
+  equipment-count: ${EQUIPMENT_COUNT:30}
+  facilities: ${FACILITIES:PHX,MUC,SHA,DET,ATL}
+  topic-prefix: titan/sensors
+  interval-ms: ${INTERVAL_MS:5000}  # Generate readings every 5 seconds
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.titan.generator: ${LOG_LEVEL:INFO}
+    org.eclipse.paho: WARN

@@ -1,0 +1,51 @@
+server:
+  port: 8082
+
+spring:
+  application:
+    name: titan-maintenance-agent
+  datasource:
+    url: ${GREENPLUM_URL:jdbc:postgresql://localhost:15432/titan-manufacturing}
+    username: ${GREENPLUM_USER:gpadmin}
+    password: ${GREENPLUM_PASSWORD:VMware1!}
+    driver-class-name: org.postgresql.Driver
+  ai:
+    mcp:
+      server:
+        name: maintenance-agent
+        version: 1.0.0
+        type: SYNC
+        protocol: STATELESS
+        stateless:
+          mcp-endpoint: /mcp
+        instructions: |
+          Maintenance Agent - Predictive maintenance for Titan Manufacturing equipment.
+
+          Available tools:
+          - predict_failure: Predict failure probability based on sensor trends
+          - estimate_rul: Estimate remaining useful life for equipment
+          - schedule_maintenance: Create maintenance work orders
+          - get_maintenance_history: Get maintenance records for equipment
+
+          Key scenario - Phoenix Incident:
+          PHX-CNC-007 has vibration trending from 2.5 to 4.2 mm/s, indicating
+          73% failure probability within 48 hours. Recommend bearing replacement
+          (SKU-BRG-7420) to prevent $12M unplanned downtime.
+        capabilities:
+          tool: true
+          resource: false
+          prompt: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.titan.maintenance: DEBUG
+    org.springframework.ai.mcp: DEBUG

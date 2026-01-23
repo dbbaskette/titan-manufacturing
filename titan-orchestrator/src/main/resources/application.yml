@@ -38,10 +38,10 @@ spring:
             sensor-tools:
               url: ${MCP_SERVERS_SENSOR:http://localhost:8081}
               endpoint: /mcp
+            maintenance-tools:
+              url: ${MCP_SERVERS_MAINTENANCE:http://localhost:8082}
+              endpoint: /mcp
             # Future MCP servers (uncomment as they're implemented):
-            # maintenance-tools:
-            #   url: ${MCP_SERVERS_MAINTENANCE:http://localhost:8082}
-            #   endpoint: /mcp
             # inventory-tools:
             #   url: ${MCP_SERVERS_INVENTORY:http://localhost:8083}
             #   endpoint: /mcp
