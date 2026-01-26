@@ -1,0 +1,55 @@
+server:
+  port: 8084
+
+spring:
+  application:
+    name: titan-logistics-agent
+  datasource:
+    url: ${GREENPLUM_URL:jdbc:postgresql://localhost:15432/titan-manufacturing}
+    username: ${GREENPLUM_USER:gpadmin}
+    password: ${GREENPLUM_PASSWORD:VMware1!}
+    driver-class-name: org.postgresql.Driver
+  ai:
+    mcp:
+      server:
+        name: logistics-agent
+        version: 1.0.0
+        type: SYNC
+        protocol: STATELESS
+        stateless:
+          mcp-endpoint: /mcp
+        instructions: |
+          Logistics Agent - Manages shipments across Titan Manufacturing's global supply chain.
+
+          Available tools:
+          - get_carriers: List available shipping carriers and their services
+          - create_shipment: Create a new shipment for an order
+          - track_shipment: Get real-time tracking status and ETA
+          - estimate_shipping: Calculate shipping costs and delivery times
+
+          Supported carriers:
+          - FedEx (Express, Ground, Freight)
+          - UPS (Express, Ground, Freight)
+          - DHL (Express, Global Forwarding)
+          - Maersk (Ocean Freight)
+          - XPO Logistics (LTL)
+
+          Facilities: PHX, MUC, SHA, DET, ATL, TOK, SAO, LON, SYD, SEA, CHI, DAL
+        capabilities:
+          tool: true
+          resource: false
+          prompt: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.titan.logistics: DEBUG
+    org.springframework.ai.mcp: DEBUG

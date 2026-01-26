@@ -1,0 +1,52 @@
+server:
+  port: 8083
+
+spring:
+  application:
+    name: titan-inventory-agent
+  datasource:
+    url: ${GREENPLUM_URL:jdbc:postgresql://localhost:15432/titan-manufacturing}
+    username: ${GREENPLUM_USER:gpadmin}
+    password: ${GREENPLUM_PASSWORD:VMware1!}
+    driver-class-name: org.postgresql.Driver
+  ai:
+    mcp:
+      server:
+        name: inventory-agent
+        version: 1.0.0
+        type: SYNC
+        protocol: STATELESS
+        stateless:
+          mcp-endpoint: /mcp
+        instructions: |
+          Inventory Agent - Manages 50,000+ SKUs across 12 Titan Manufacturing facilities.
+
+          Available tools:
+          - check_stock: Check inventory levels for a product across facilities
+          - search_products: Semantic search using pgvector embeddings (natural language queries)
+          - find_alternatives: Find alternative products or suppliers for stockouts
+          - calculate_reorder: Calculate optimal reorder quantities and timing
+
+          Key capabilities:
+          - Multi-facility inventory tracking (PHX, MUC, SHA, DET, ATL, TOK, SAO, LON, SYD, SEA, CHI, DAL)
+          - pgvector semantic search for product discovery
+          - Supplier relationship management with quality ratings
+          - Reorder point and safety stock calculations
+        capabilities:
+          tool: true
+          resource: false
+          prompt: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.titan.inventory: DEBUG
+    org.springframework.ai.mcp: DEBUG

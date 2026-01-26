@@ -24,13 +24,41 @@ services:
     environment:
       - PGPASSWORD=VMware1!
     volumes:
-      - ./config/greenplum/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - greenplum-data:/data
+      - ./config/greenplum/init.sql:/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "su - gpadmin -c '/usr/local/greenplum-db/bin/psql -U gpadmin -d postgres -c \"SELECT 1\"' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 60s
+    networks:
+      - titan-network
+
+  # Greenplum database initialization
+  # Creates titan-manufacturing database and runs init.sql
+  # MCP servers depend on this completing successfully
+  greenplum-init:
+    image: greenplum-sne-full
+    container_name: titan-greenplum-init
+    depends_on:
+      greenplum:
+        condition: service_healthy
+    volumes:
+      - ./config/greenplum/init.sql:/init.sql:ro
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        echo "Checking if database exists..."
+        if ! /usr/local/greenplum-db/bin/psql -h greenplum -U gpadmin -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = 'titan-manufacturing'" | grep -q 1; then
+          echo "Creating titan-manufacturing database..."
+          /usr/local/greenplum-db/bin/psql -h greenplum -U gpadmin -d postgres -c "CREATE DATABASE \"titan-manufacturing\";"
+          echo "Running init.sql..."
+          /usr/local/greenplum-db/bin/psql -h greenplum -U gpadmin -d titan-manufacturing -f /init.sql 2>&1 || true
+          echo "Database initialization complete!"
+        else
+          echo "Database titan-manufacturing already exists, skipping init."
+        fi
     networks:
       - titan-network
 
@@ -87,6 +115,21 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      # Wait for MCP servers to be healthy before starting
+      sensor-mcp-server:
+        condition: service_healthy
+      maintenance-mcp-server:
+        condition: service_healthy
+      inventory-mcp-server:
+        condition: service_healthy
+      logistics-mcp-server:
+        condition: service_healthy
+      order-mcp-server:
+        condition: service_healthy
+      communications-mcp-server:
+        condition: service_healthy
+      governance-mcp-server:
+        condition: service_healthy
     networks:
       - titan-network
     profiles:
@@ -111,10 +154,16 @@ services:
       - MQTT_PASS=titan5.0
       - MQTT_ENABLED=true
     depends_on:
-      greenplum:
-        condition: service_healthy
+      greenplum-init:
+        condition: service_completed_successfully
       rabbitmq:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8081/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     networks:
       - titan-network
     profiles:
@@ -131,8 +180,14 @@ services:
       - GREENPLUM_USER=gpadmin
       - GREENPLUM_PASSWORD=VMware1!
     depends_on:
-      greenplum:
-        condition: service_healthy
+      greenplum-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8082/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     networks:
       - titan-network
     profiles:
@@ -162,6 +217,7 @@ services:
   inventory-mcp-server:
     build: ./inventory-mcp-server
     container_name: titan-inventory-agent
+    hostname: inventory-mcp-server
     ports:
       - "8083:8083"
     environment:
@@ -170,8 +226,14 @@ services:
       - GREENPLUM_USER=gpadmin
       - GREENPLUM_PASSWORD=VMware1!
     depends_on:
-      greenplum:
-        condition: service_healthy
+      greenplum-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8083/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     networks:
       - titan-network
     profiles:
@@ -180,6 +242,7 @@ services:
   logistics-mcp-server:
     build: ./logistics-mcp-server
     container_name: titan-logistics-agent
+    hostname: logistics-mcp-server
     ports:
       - "8084:8084"
     environment:
@@ -188,16 +251,26 @@ services:
       - GREENPLUM_USER=gpadmin
       - GREENPLUM_PASSWORD=VMware1!
     depends_on:
-      greenplum:
-        condition: service_healthy
+      greenplum-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8084/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     networks:
       - titan-network
     profiles:
       - agents
 
+  # ===========================================================================
+  # INCREMENT 5 & 6: ORDER FULFILLMENT & DATA GOVERNANCE
+  # ===========================================================================
   order-mcp-server:
     build: ./order-mcp-server
     container_name: titan-order-agent
+    hostname: order-mcp-server
     ports:
       - "8085:8085"
     environment:
@@ -205,14 +278,15 @@ services:
       - GREENPLUM_URL=jdbc:postgresql://greenplum:5432/titan-manufacturing
       - GREENPLUM_USER=gpadmin
       - GREENPLUM_PASSWORD=VMware1!
-      - RABBITMQ_HOST=rabbitmq
-      - RABBITMQ_USER=titan
-      - RABBITMQ_PASS=titan5.0
     depends_on:
-      greenplum:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
+      greenplum-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8085/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     networks:
       - titan-network
     profiles:
@@ -221,6 +295,7 @@ services:
   communications-mcp-server:
     build: ./communications-mcp-server
     container_name: titan-comms-agent
+    hostname: communications-mcp-server
     ports:
       - "8086:8086"
     environment:
@@ -228,10 +303,15 @@ services:
       - GREENPLUM_URL=jdbc:postgresql://greenplum:5432/titan-manufacturing
       - GREENPLUM_USER=gpadmin
       - GREENPLUM_PASSWORD=VMware1!
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
     depends_on:
-      greenplum:
-        condition: service_healthy
+      greenplum-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8086/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     networks:
       - titan-network
     profiles:
@@ -240,19 +320,29 @@ services:
   governance-mcp-server:
     build: ./governance-mcp-server
     container_name: titan-governance-agent
+    hostname: governance-mcp-server
     ports:
       - "8087:8087"
     environment:
       - SPRING_PROFILES_ACTIVE=docker
-      - OPENMETADATA_URL=http://openmetadata:8585
+      - GREENPLUM_URL=jdbc:postgresql://greenplum:5432/titan-manufacturing
+      - GREENPLUM_USER=gpadmin
+      - GREENPLUM_PASSWORD=VMware1!
+      - OPENMETADATA_URL=${OPENMETADATA_URL:-http://localhost:8585}
       - OPENMETADATA_TOKEN=${OPENMETADATA_TOKEN:-}
     depends_on:
-      openmetadata:
-        condition: service_healthy
+      greenplum-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8087/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     networks:
       - titan-network
     profiles:
-      - governance
+      - agents
 
   # ===========================================================================
   # OPENMETADATA STACK (Increment 6 - Data Governance)
@@ -369,8 +459,12 @@ services:
     environment:
       - REACT_APP_ORCHESTRATOR_URL=http://localhost:8080
       - REACT_APP_OPENMETADATA_URL=http://localhost:8585
-    depends_on:
-      - titan-orchestrator
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3000/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     networks:
       - titan-network
     profiles:
@@ -381,6 +475,7 @@ networks:
     driver: bridge
 
 volumes:
+  greenplum-data:
   rabbitmq-data:
   grafana-data:
   prometheus-data:

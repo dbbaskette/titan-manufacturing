@@ -701,6 +701,106 @@ INSERT INTO product_suppliers VALUES
 ('ENGY-WT-008', 'SUP-TIMKEN', FALSE, 17200.00, 1);
 
 -- =============================================================================
+-- LOGISTICS (Carriers, Shipments, Shipping Rates)
+-- =============================================================================
+
+-- Carriers (FedEx, UPS, DHL, Maersk, etc.)
+CREATE TABLE carriers (
+    carrier_id VARCHAR(20) PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    service_type VARCHAR(50),  -- EXPRESS, GROUND, FREIGHT, AIR
+    tracking_url_template VARCHAR(255),
+    contact_email VARCHAR(100),
+    contact_phone VARCHAR(50),
+    is_active BOOLEAN DEFAULT TRUE
+);
+
+INSERT INTO carriers VALUES
+('FEDEX-EXPRESS', 'FedEx Express', 'EXPRESS', 'https://www.fedex.com/fedextrack/?trknbr={tracking}', 'shipping@fedex.com', '1-800-463-3339', TRUE),
+('FEDEX-GROUND', 'FedEx Ground', 'GROUND', 'https://www.fedex.com/fedextrack/?trknbr={tracking}', 'shipping@fedex.com', '1-800-463-3339', TRUE),
+('FEDEX-FREIGHT', 'FedEx Freight', 'FREIGHT', 'https://www.fedex.com/fedextrack/?trknbr={tracking}', 'freight@fedex.com', '1-800-463-3339', TRUE),
+('UPS-EXPRESS', 'UPS Express', 'EXPRESS', 'https://www.ups.com/track?tracknum={tracking}', 'shipping@ups.com', '1-800-742-5877', TRUE),
+('UPS-GROUND', 'UPS Ground', 'GROUND', 'https://www.ups.com/track?tracknum={tracking}', 'shipping@ups.com', '1-800-742-5877', TRUE),
+('UPS-FREIGHT', 'UPS Freight', 'FREIGHT', 'https://www.ups.com/track?tracknum={tracking}', 'freight@ups.com', '1-800-742-5877', TRUE),
+('DHL-EXPRESS', 'DHL Express', 'EXPRESS', 'https://www.dhl.com/track?tracking-id={tracking}', 'shipping@dhl.com', '1-800-225-5345', TRUE),
+('DHL-GLOBAL', 'DHL Global Forwarding', 'FREIGHT', 'https://www.dhl.com/track?tracking-id={tracking}', 'globalforward@dhl.com', '1-800-225-5345', TRUE),
+('MAERSK', 'Maersk Line', 'FREIGHT', 'https://www.maersk.com/tracking/{tracking}', 'customerservice@maersk.com', '1-800-321-8807', TRUE),
+('XPO-LTL', 'XPO Logistics LTL', 'FREIGHT', 'https://www.xpo.com/track?pro={tracking}', 'ltl@xpo.com', '1-800-755-2728', TRUE);
+
+-- Shipments
+CREATE TABLE shipments (
+    shipment_id VARCHAR(30) PRIMARY KEY,
+    order_id VARCHAR(30) REFERENCES orders(order_id),
+    carrier_id VARCHAR(20) REFERENCES carriers(carrier_id),
+    tracking_number VARCHAR(100),
+    status VARCHAR(30) DEFAULT 'PENDING',  -- PENDING, PICKED_UP, IN_TRANSIT, OUT_FOR_DELIVERY, DELIVERED, EXCEPTION
+    origin_facility VARCHAR(10) REFERENCES titan_facilities(facility_id),
+    destination_address TEXT,
+    destination_city VARCHAR(100),
+    destination_country VARCHAR(50),
+    ship_date TIMESTAMP,
+    estimated_delivery TIMESTAMP,
+    actual_delivery TIMESTAMP,
+    weight_kg DECIMAL(10,2),
+    package_count INT DEFAULT 1,
+    shipping_cost DECIMAL(10,2),
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_shipment_order ON shipments(order_id);
+CREATE INDEX idx_shipment_status ON shipments(status);
+CREATE INDEX idx_shipment_carrier ON shipments(carrier_id);
+CREATE INDEX idx_shipment_tracking ON shipments(tracking_number);
+
+-- Shipping Rates (for cost estimation)
+CREATE TABLE shipping_rates (
+    rate_id SERIAL PRIMARY KEY,
+    carrier_id VARCHAR(20) REFERENCES carriers(carrier_id),
+    origin_region VARCHAR(10),   -- NA, EU, APAC, LATAM
+    dest_region VARCHAR(10),
+    weight_min_kg DECIMAL(10,2),
+    weight_max_kg DECIMAL(10,2),
+    cost_per_kg DECIMAL(10,2),
+    base_cost DECIMAL(10,2),
+    transit_days_min INT,
+    transit_days_max INT,
+    service_level VARCHAR(20),  -- STANDARD, EXPRESS, PRIORITY
+    effective_date DATE DEFAULT CURRENT_DATE,
+    UNIQUE(carrier_id, origin_region, dest_region, weight_min_kg, service_level)
+);
+
+-- Sample shipping rates
+INSERT INTO shipping_rates (carrier_id, origin_region, dest_region, weight_min_kg, weight_max_kg, cost_per_kg, base_cost, transit_days_min, transit_days_max, service_level) VALUES
+-- FedEx Express rates
+('FEDEX-EXPRESS', 'NA', 'NA', 0, 10, 8.50, 15.00, 1, 2, 'EXPRESS'),
+('FEDEX-EXPRESS', 'NA', 'NA', 10, 50, 6.50, 25.00, 1, 2, 'EXPRESS'),
+('FEDEX-EXPRESS', 'NA', 'EU', 0, 10, 22.00, 45.00, 2, 4, 'EXPRESS'),
+('FEDEX-EXPRESS', 'NA', 'EU', 10, 50, 18.00, 65.00, 2, 4, 'EXPRESS'),
+('FEDEX-EXPRESS', 'NA', 'APAC', 0, 10, 28.00, 55.00, 3, 5, 'EXPRESS'),
+-- FedEx Ground rates
+('FEDEX-GROUND', 'NA', 'NA', 0, 25, 3.50, 8.00, 3, 5, 'STANDARD'),
+('FEDEX-GROUND', 'NA', 'NA', 25, 100, 2.80, 12.00, 3, 5, 'STANDARD'),
+-- UPS rates
+('UPS-EXPRESS', 'NA', 'NA', 0, 10, 9.00, 16.00, 1, 2, 'EXPRESS'),
+('UPS-EXPRESS', 'EU', 'EU', 0, 10, 7.50, 12.00, 1, 2, 'EXPRESS'),
+('UPS-GROUND', 'NA', 'NA', 0, 25, 3.25, 7.50, 3, 5, 'STANDARD'),
+-- DHL rates
+('DHL-EXPRESS', 'EU', 'NA', 0, 10, 24.00, 48.00, 2, 4, 'EXPRESS'),
+('DHL-EXPRESS', 'APAC', 'NA', 0, 10, 26.00, 52.00, 3, 5, 'EXPRESS'),
+-- Freight rates
+('FEDEX-FREIGHT', 'NA', 'NA', 100, 5000, 1.20, 150.00, 5, 10, 'STANDARD'),
+('UPS-FREIGHT', 'NA', 'NA', 100, 5000, 1.15, 145.00, 5, 10, 'STANDARD'),
+('MAERSK', 'APAC', 'NA', 1000, 50000, 0.35, 2500.00, 21, 35, 'STANDARD'),
+('MAERSK', 'EU', 'NA', 1000, 50000, 0.28, 1800.00, 14, 21, 'STANDARD');
+
+-- Sample shipments for existing orders
+INSERT INTO shipments (shipment_id, order_id, carrier_id, tracking_number, status, origin_facility, destination_address, destination_city, destination_country, ship_date, estimated_delivery, weight_kg, shipping_cost) VALUES
+('SHIP-2024-001', 'TM-2024-45892', 'FEDEX-EXPRESS', 'FX789456123US', 'IN_TRANSIT', 'PHX', 'Boeing Everett Factory, 3003 W Casino Rd', 'Everett, WA', 'USA', NOW() - INTERVAL '1 day', NOW() + INTERVAL '1 day', 600.0, 4250.00),
+('SHIP-2024-002', 'TM-2024-45893', 'UPS-GROUND', 'UPS1Z999AA10123456784', 'PENDING', 'DET', 'Tesla Fremont Factory, 45500 Fremont Blvd', 'Fremont, CA', 'USA', NULL, NOW() + INTERVAL '7 days', 9000.0, 450.00);
+
+-- =============================================================================
 -- SUMMARY VIEW
 -- =============================================================================
 
@@ -1574,3 +1674,210 @@ ORDER BY
 
 -- Equipment count summary
 SELECT facility_id, COUNT(*) as equipment_count FROM equipment GROUP BY facility_id ORDER BY facility_id;
+
+-- =============================================================================
+-- SEMANTIC SEARCH FUNCTION (pgvector)
+-- =============================================================================
+
+-- Function for semantic product search using pgvector
+-- Requires embeddings to be populated in products.embedding column
+CREATE OR REPLACE FUNCTION search_products_semantic(
+    query_embedding vector(1536),
+    division_filter VARCHAR DEFAULT NULL,
+    category_filter VARCHAR DEFAULT NULL,
+    result_limit INT DEFAULT 10
+)
+RETURNS TABLE (
+    sku VARCHAR,
+    name VARCHAR,
+    description TEXT,
+    division_id VARCHAR,
+    category VARCHAR,
+    subcategory VARCHAR,
+    unit_price DECIMAL,
+    similarity FLOAT
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        p.sku,
+        p.name,
+        p.description,
+        p.division_id,
+        p.category,
+        p.subcategory,
+        p.unit_price,
+        (1 - (p.embedding <=> query_embedding))::FLOAT as similarity
+    FROM products p
+    WHERE p.embedding IS NOT NULL
+      AND p.is_active = TRUE
+      AND (division_filter IS NULL OR p.division_id = division_filter)
+      AND (category_filter IS NULL OR p.category = category_filter)
+    ORDER BY p.embedding <=> query_embedding
+    LIMIT result_limit;
+END;
+$$ LANGUAGE plpgsql;
+
+-- =============================================================================
+-- INCREMENT 5 & 6: ORDER FULFILLMENT & DATA GOVERNANCE TABLES
+-- =============================================================================
+
+-- Order workflow events for tracking order lifecycle
+CREATE TABLE order_events (
+    event_id SERIAL PRIMARY KEY,
+    order_id VARCHAR(30) REFERENCES orders(order_id),
+    event_type VARCHAR(50) NOT NULL,  -- CREATED, VALIDATED, APPROVED, ALLOCATED, SHIPPED, DELIVERED, CANCELLED
+    event_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    event_data JSONB,
+    created_by VARCHAR(100),
+    notes TEXT
+);
+
+CREATE INDEX idx_order_events_order ON order_events(order_id);
+CREATE INDEX idx_order_events_type ON order_events(event_type);
+CREATE INDEX idx_order_events_timestamp ON order_events(event_timestamp);
+
+-- Customer contracts for priority, pricing, terms
+CREATE TABLE customer_contracts (
+    contract_id VARCHAR(30) PRIMARY KEY,
+    customer_id VARCHAR(20) REFERENCES customers(customer_id),
+    contract_type VARCHAR(50) NOT NULL,  -- STANDARD, PREMIUM, STRATEGIC
+    priority_level INTEGER DEFAULT 3,  -- 1=highest priority
+    discount_percent DECIMAL(5,2) DEFAULT 0,
+    payment_terms INTEGER DEFAULT 30,  -- days
+    credit_limit DECIMAL(15,2),
+    valid_from DATE NOT NULL,
+    valid_to DATE NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_contracts_customer ON customer_contracts(customer_id);
+CREATE INDEX idx_contracts_valid ON customer_contracts(valid_from, valid_to);
+
+-- Customer inquiries with RAG support for intelligent responses
+CREATE TABLE customer_inquiries (
+    inquiry_id SERIAL PRIMARY KEY,
+    customer_id VARCHAR(20) REFERENCES customers(customer_id),
+    order_id VARCHAR(30) REFERENCES orders(order_id),
+    inquiry_type VARCHAR(50) NOT NULL,  -- STATUS, EXPEDITE, QUALITY, COMPLAINT, GENERAL
+    inquiry_text TEXT NOT NULL,
+    response_text TEXT,
+    embedding vector(1536),
+    status VARCHAR(20) DEFAULT 'OPEN',  -- OPEN, IN_PROGRESS, RESOLVED, CLOSED
+    assigned_to VARCHAR(100),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    resolved_at TIMESTAMP
+);
+
+CREATE INDEX idx_inquiries_customer ON customer_inquiries(customer_id);
+CREATE INDEX idx_inquiries_order ON customer_inquiries(order_id);
+CREATE INDEX idx_inquiries_status ON customer_inquiries(status);
+-- Note: ivfflat index on embeddings disabled - Greenplum crashes on empty tables
+-- Add after data is populated: CREATE INDEX idx_inquiries_embedding ON customer_inquiries USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+
+-- Communication templates for automated notifications
+CREATE TABLE communication_templates (
+    template_id VARCHAR(50) PRIMARY KEY,
+    template_type VARCHAR(50) NOT NULL,  -- ORDER_CONFIRMATION, SHIPMENT_NOTICE, DELAY_ALERT, DELIVERY_CONFIRMATION
+    subject_template TEXT NOT NULL,
+    body_template TEXT NOT NULL,
+    variables JSONB,  -- List of required variables
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Material batch tracking for traceability and compliance
+CREATE TABLE material_batches (
+    batch_id VARCHAR(30) PRIMARY KEY,
+    material_sku VARCHAR(20),  -- References products(sku)
+    supplier_id VARCHAR(20),   -- References suppliers(supplier_id)
+    received_date DATE NOT NULL,
+    quantity DECIMAL(12,2) NOT NULL,
+    unit_of_measure VARCHAR(20) NOT NULL,
+    storage_location VARCHAR(50),
+    production_date DATE,
+    expiry_date DATE,
+    status VARCHAR(20) DEFAULT 'AVAILABLE',  -- AVAILABLE, RESERVED, CONSUMED, QUARANTINE, EXPIRED
+    lot_number VARCHAR(50),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_batches_material ON material_batches(material_sku);
+CREATE INDEX idx_batches_supplier ON material_batches(supplier_id);
+CREATE INDEX idx_batches_status ON material_batches(status);
+
+-- Batch certifications for quality and compliance documentation
+CREATE TABLE batch_certifications (
+    cert_id SERIAL PRIMARY KEY,
+    batch_id VARCHAR(30),  -- References material_batches(batch_id)
+    cert_type VARCHAR(50) NOT NULL,  -- MILL_CERT, COC, QUALITY_REPORT, FAA_CERT, ISO_CERT, MATERIAL_TEST
+    cert_number VARCHAR(100) NOT NULL,
+    issued_date DATE NOT NULL,
+    expiry_date DATE,
+    document_url TEXT,
+    issuing_authority VARCHAR(200),
+    verified_by VARCHAR(100),
+    verified_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_certs_batch ON batch_certifications(batch_id);
+CREATE INDEX idx_certs_type ON batch_certifications(cert_type);
+
+-- =============================================================================
+-- INCREMENT 5 & 6: SAMPLE DATA
+-- =============================================================================
+
+-- Customer contracts for strategic accounts
+INSERT INTO customer_contracts (contract_id, customer_id, contract_type, priority_level, discount_percent, payment_terms, credit_limit, valid_from, valid_to) VALUES
+('CTR-BOEING-2024', 'CUST-001', 'STRATEGIC', 1, 12.50, 45, 50000000.00, '2024-01-01', '2025-12-31'),
+('CTR-AIRBUS-2024', 'CUST-002', 'STRATEGIC', 1, 11.00, 45, 45000000.00, '2024-01-01', '2025-12-31'),
+('CTR-GENENGY-2024', 'CUST-003', 'PREMIUM', 2, 8.00, 30, 20000000.00, '2024-01-01', '2025-12-31'),
+('CTR-TESLA-2024', 'CUST-004', 'PREMIUM', 2, 7.50, 30, 15000000.00, '2024-01-01', '2025-12-31'),
+('CTR-SIEMENS-2024', 'CUST-005', 'PREMIUM', 2, 6.00, 30, 12000000.00, '2024-01-01', '2025-12-31');
+
+-- Communication templates
+INSERT INTO communication_templates (template_id, template_type, subject_template, body_template, variables) VALUES
+('ORDER_CONFIRM', 'ORDER_CONFIRMATION', 'Titan Manufacturing - Order {{order_id}} Confirmed',
+ E'Dear {{customer_name}},\n\nThank you for your order. Your order {{order_id}} has been confirmed and is being processed.\n\nOrder Details:\n{{order_details}}\n\nExpected Delivery: {{expected_date}}\n\nIf you have any questions, please contact your account manager.\n\nBest regards,\nTitan Manufacturing',
+ '["order_id", "customer_name", "order_details", "expected_date"]'),
+('SHIP_NOTICE', 'SHIPMENT_NOTICE', 'Your Titan Order {{order_id}} Has Shipped',
+ E'Dear {{customer_name}},\n\nGreat news! Your order {{order_id}} has been shipped.\n\nShipment Details:\n- Carrier: {{carrier}}\n- Tracking Number: {{tracking_number}}\n- Track your shipment: {{tracking_url}}\n\nEstimated Delivery: {{eta}}\n\nThank you for choosing Titan Manufacturing.',
+ '["order_id", "customer_name", "carrier", "tracking_number", "tracking_url", "eta"]'),
+('DELAY_ALERT', 'DELAY_ALERT', 'Important Update on Your Order {{order_id}}',
+ E'Dear {{customer_name}},\n\nWe want to keep you informed about your order {{order_id}}.\n\nUnfortunately, there is a delay due to: {{delay_reason}}\n\nNew Expected Delivery: {{new_date}}\n\nWe apologize for any inconvenience. Your account manager {{account_manager}} will contact you shortly.\n\nSincerely,\nTitan Manufacturing Customer Service',
+ '["order_id", "customer_name", "delay_reason", "new_date", "account_manager"]'),
+('DELIVERY_CONFIRM', 'DELIVERY_CONFIRMATION', 'Order {{order_id}} Delivered - Thank You!',
+ E'Dear {{customer_name}},\n\nYour order {{order_id}} has been delivered on {{delivery_date}}.\n\nWe hope everything meets your expectations. If you have any questions or concerns about your order, please contact us within 30 days.\n\nThank you for your business!\n\nBest regards,\nTitan Manufacturing',
+ '["order_id", "customer_name", "delivery_date"]');
+
+-- Material batches for traceability demo (Boeing order)
+INSERT INTO material_batches (batch_id, material_sku, supplier_id, received_date, quantity, unit_of_measure, storage_location, production_date, lot_number, status) VALUES
+('TI-2024-0892', 'AERO-TB-001', 'SUP-TIMET', '2024-06-15', 2000.00, 'KG', 'PHX-WH-A1-RACK-12', '2024-06-10', 'TIMET-2024-5621', 'AVAILABLE'),
+('TI-2024-0893', 'AERO-TB-001', 'SUP-TIMET', '2024-07-01', 1500.00, 'KG', 'MUC-WH-B2-RACK-05', '2024-06-25', 'TIMET-2024-5734', 'AVAILABLE'),
+('TI-2024-0894', 'AERO-TB-001', 'SUP-TIMET', '2024-07-15', 1800.00, 'KG', 'PHX-WH-A1-RACK-14', '2024-07-10', 'TIMET-2024-5891', 'RESERVED'),
+('AL-2024-1205', 'AERO-AL-002', 'SUP-ALCOA', '2024-06-20', 3500.00, 'KG', 'PHX-WH-A2-RACK-08', '2024-06-15', 'ALCOA-2024-8842', 'AVAILABLE'),
+('NI-2024-0456', 'AERO-NI-003', 'SUP-HEXCEL', '2024-06-25', 800.00, 'KG', 'MUC-WH-B1-RACK-03', '2024-06-20', 'HAYNES-2024-1234', 'AVAILABLE');
+
+-- Batch certifications
+INSERT INTO batch_certifications (batch_id, cert_type, cert_number, issued_date, expiry_date, document_url, issuing_authority, verified_by, verified_at) VALUES
+('TI-2024-0892', 'MILL_CERT', 'MC-TIMET-2024-5621', '2024-06-14', '2025-06-14', '/docs/certs/MC-TIMET-2024-5621.pdf', 'TIMET Corporation', 'QA-SMITH', '2024-06-15 10:30:00'),
+('TI-2024-0892', 'FAA_CERT', 'FAA-MAT-2024-8842', '2024-06-15', '2025-06-15', '/docs/certs/FAA-MAT-2024-8842.pdf', 'Federal Aviation Administration', 'QA-SMITH', '2024-06-15 14:00:00'),
+('TI-2024-0892', 'MATERIAL_TEST', 'MTR-TIMET-2024-5621-A', '2024-06-14', NULL, '/docs/certs/MTR-TIMET-2024-5621-A.pdf', 'TIMET Quality Lab', 'QA-SMITH', '2024-06-15 10:45:00'),
+('TI-2024-0893', 'MILL_CERT', 'MC-TIMET-2024-5734', '2024-06-30', '2025-06-30', '/docs/certs/MC-TIMET-2024-5734.pdf', 'TIMET Corporation', 'QA-JONES', '2024-07-01 09:15:00'),
+('TI-2024-0893', 'FAA_CERT', 'FAA-MAT-2024-9156', '2024-07-01', '2025-07-01', '/docs/certs/FAA-MAT-2024-9156.pdf', 'Federal Aviation Administration', 'QA-JONES', '2024-07-01 11:30:00'),
+('AL-2024-1205', 'MILL_CERT', 'MC-ALCOA-2024-8842', '2024-06-19', '2025-06-19', '/docs/certs/MC-ALCOA-2024-8842.pdf', 'Alcoa Corporation', 'QA-CHEN', '2024-06-20 08:00:00'),
+('AL-2024-1205', 'ISO_CERT', 'ISO-9001-ALCOA-2024', '2024-01-01', '2025-01-01', '/docs/certs/ISO-9001-ALCOA-2024.pdf', 'ISO Certification Body', 'QA-CHEN', '2024-06-20 08:15:00');
+
+-- Order events for Boeing order TM-2024-45892
+INSERT INTO order_events (order_id, event_type, event_timestamp, event_data, created_by, notes) VALUES
+('TM-2024-45892', 'CREATED', '2024-07-20 09:00:00', '{"source": "EDI", "po_number": "BOEING-PO-98765"}', 'EDI-SYSTEM', 'Order received via EDI'),
+('TM-2024-45892', 'VALIDATED', '2024-07-20 09:15:00', '{"inventory_check": "PASSED", "credit_check": "PASSED"}', 'ORDER-SYSTEM', 'Automatic validation passed'),
+('TM-2024-45892', 'APPROVED', '2024-07-20 09:30:00', '{"approver": "John Smith", "approval_level": "STRATEGIC"}', 'john.smith@titan.com', 'Strategic account auto-approved');
+
+-- Sample customer inquiries
+INSERT INTO customer_inquiries (customer_id, order_id, inquiry_type, inquiry_text, response_text, status, created_at, resolved_at) VALUES
+('CUST-001', 'TM-2024-45890', 'STATUS', 'What is the current status of order TM-2024-45890? We need this for our production schedule.', 'Your order TM-2024-45890 is currently in production and on schedule for delivery by the original date. All materials have been allocated and manufacturing is proceeding as planned.', 'RESOLVED', '2024-07-18 10:30:00', '2024-07-18 11:45:00'),
+('CUST-002', 'TM-2024-45875', 'EXPEDITE', 'Can we expedite order TM-2024-45875? We have an urgent production need.', 'We have reviewed your expedite request for TM-2024-45875. Given your strategic account status, we can accommodate a 3-day acceleration. Additional expedite charges will apply.', 'RESOLVED', '2024-07-15 14:00:00', '2024-07-15 16:30:00'),
+('CUST-003', NULL, 'GENERAL', 'What lead times should we expect for large energy sector orders in Q4?', NULL, 'OPEN', '2024-07-22 08:00:00', NULL);

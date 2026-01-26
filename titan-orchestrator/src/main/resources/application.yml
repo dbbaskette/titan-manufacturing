@@ -31,9 +31,18 @@ spring:
         enabled: true
         type: SYNC
         request-timeout: 120s
+        # Connection retry settings for late-starting MCP servers
+        sse:
+          connections:
+            # SSE connections would go here if needed
         toolcallback:
           enabled: true
         streamable-http:
+          # Retry configuration - servers that aren't available at startup will be retried
+          retry-on-error: true
+          initial-retry-delay: 1000
+          max-retry-delay: 30000
+          max-retries: 10
           connections:
             sensor-tools:
               url: ${MCP_SERVERS_SENSOR:http://localhost:8081}
@@ -41,22 +50,21 @@ spring:
             maintenance-tools:
               url: ${MCP_SERVERS_MAINTENANCE:http://localhost:8082}
               endpoint: /mcp
-            # Future MCP servers (uncomment as they're implemented):
-            # inventory-tools:
-            #   url: ${MCP_SERVERS_INVENTORY:http://localhost:8083}
-            #   endpoint: /mcp
-            # logistics-tools:
-            #   url: ${MCP_SERVERS_LOGISTICS:http://localhost:8084}
-            #   endpoint: /mcp
-            # order-tools:
-            #   url: ${MCP_SERVERS_ORDER:http://localhost:8085}
-            #   endpoint: /mcp
-            # communications-tools:
-            #   url: ${MCP_SERVERS_COMMUNICATIONS:http://localhost:8086}
-            #   endpoint: /mcp
-            # governance-tools:
-            #   url: ${MCP_SERVERS_GOVERNANCE:http://localhost:8087}
-            #   endpoint: /mcp
+            inventory-tools:
+              url: ${MCP_SERVERS_INVENTORY:http://localhost:8083}
+              endpoint: /mcp
+            logistics-tools:
+              url: ${MCP_SERVERS_LOGISTICS:http://localhost:8084}
+              endpoint: /mcp
+            order-tools:
+              url: ${MCP_SERVERS_ORDER:http://localhost:8085}
+              endpoint: /mcp
+            communications-tools:
+              url: ${MCP_SERVERS_COMMUNICATIONS:http://localhost:8086}
+              endpoint: /mcp
+            governance-tools:
+              url: ${MCP_SERVERS_GOVERNANCE:http://localhost:8087}
+              endpoint: /mcp
 
 # Embabel agent configuration
 embabel:

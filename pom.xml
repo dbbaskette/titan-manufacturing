@@ -17,6 +17,11 @@
         <module>titan-orchestrator</module>
         <module>maintenance-mcp-server</module>
         <module>sensor-data-generator</module>
+        <module>inventory-mcp-server</module>
+        <module>logistics-mcp-server</module>
+        <module>order-mcp-server</module>
+        <module>communications-mcp-server</module>
+        <module>governance-mcp-server</module>
     </modules>
 
     <properties>

@@ -1,0 +1,38 @@
+server:
+  port: 8087
+
+spring:
+  application:
+    name: titan-governance-mcp-server
+
+  datasource:
+    url: ${GREENPLUM_URL:jdbc:postgresql://localhost:15432/titan-manufacturing}
+    username: ${GREENPLUM_USER:gpadmin}
+    password: ${GREENPLUM_PASSWORD:VMware1!}
+    driver-class-name: org.postgresql.Driver
+
+  ai:
+    mcp:
+      server:
+        name: titan-governance-tools
+        version: 1.0.0
+        type: SYNC
+
+# OpenMetadata configuration
+openmetadata:
+  url: ${OPENMETADATA_URL:http://localhost:8585}
+  token: ${OPENMETADATA_TOKEN:}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.titan.governance: DEBUG
+    org.springframework.ai.mcp: DEBUG
