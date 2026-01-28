@@ -898,6 +898,33 @@ INSERT INTO sensor_types VALUES
 ('axis_load_y', 'Y-Axis Load', 'percent', 0, 70, 85, 95),
 ('axis_load_z', 'Z-Axis Load', 'percent', 0, 70, 85, 95);
 
+-- Per-equipment threshold overrides (NULL equipment_id = global default)
+CREATE TABLE sensor_thresholds (
+    threshold_id SERIAL PRIMARY KEY,
+    equipment_id VARCHAR(50),
+    sensor_type VARCHAR(50) NOT NULL REFERENCES sensor_types(sensor_type),
+    warning_threshold DOUBLE PRECISION,
+    critical_threshold DOUBLE PRECISION,
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_by VARCHAR(50),
+    UNIQUE(equipment_id, sensor_type)
+);
+
+CREATE INDEX idx_threshold_equip ON sensor_thresholds (equipment_id);
+CREATE INDEX idx_threshold_type ON sensor_thresholds (sensor_type);
+
+-- Seed some equipment-specific thresholds for demo
+INSERT INTO sensor_thresholds (equipment_id, sensor_type, warning_threshold, critical_threshold, updated_by) VALUES
+-- Phoenix CNC-007 (the problem child) - tighter thresholds for early detection
+('PHX-CNC-007', 'vibration', 3.0, 4.5, 'system'),
+('PHX-CNC-007', 'temperature', 65, 80, 'system'),
+-- Detroit's high-precision machines need tighter vibration limits
+('DET-CNC-001', 'vibration', 2.5, 4.0, 'system'),
+('DET-CNC-002', 'vibration', 2.5, 4.0, 'system'),
+-- Shanghai high-volume machines can tolerate higher temps
+('SHA-CNC-001', 'temperature', 75, 90, 'system'),
+('SHA-CNC-002', 'temperature', 75, 90, 'system');
+
 -- Anomalies table
 CREATE TABLE anomalies (
     anomaly_id SERIAL PRIMARY KEY,
@@ -1294,26 +1321,292 @@ CREATE INDEX idx_rtf_rul ON run_to_failure_data (rul);
 
 -- Model coefficients table (stores trained model parameters)
 CREATE TABLE ml_model_coefficients (
-    model_id VARCHAR(50) PRIMARY KEY,
+    model_id VARCHAR(50) NOT NULL,
     model_type VARCHAR(50),
-    feature_name VARCHAR(100),
+    feature_name VARCHAR(100) NOT NULL,
     coefficient DOUBLE PRECISION,
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    description TEXT
+    description TEXT,
+    PRIMARY KEY (model_id, feature_name)
 );
 
--- Insert pre-trained logistic regression coefficients
--- These are computed from the training data patterns
--- P(failure) = sigmoid(intercept + sum(coef_i * feature_i))
-INSERT INTO ml_model_coefficients (model_id, model_type, feature_name, coefficient, description) VALUES
-('failure_predictor_v1', 'logistic_regression', 'intercept', -8.5, 'Baseline probability (very low when healthy)'),
-('failure_predictor_v1', 'logistic_regression', 'vibration_normalized', 4.2, 'Vibration contribution (key predictor)'),
-('failure_predictor_v1', 'logistic_regression', 'temperature_normalized', 2.8, 'Temperature contribution'),
-('failure_predictor_v1', 'logistic_regression', 'vibration_trend_rate', 15.0, 'Vibration rate of change (high weight)'),
-('failure_predictor_v1', 'logistic_regression', 'temperature_trend_rate', 8.5, 'Temperature rate of change'),
-('failure_predictor_v1', 'logistic_regression', 'days_since_maintenance', 0.015, 'Time since last maintenance'),
-('failure_predictor_v1', 'logistic_regression', 'equipment_age_years', 0.08, 'Equipment age factor'),
-('failure_predictor_v1', 'logistic_regression', 'anomaly_count', 1.5, 'Number of active anomalies');
+-- =============================================================================
+-- MADlib EXTENSION — Required for logistic regression training
+-- =============================================================================
+CREATE EXTENSION IF NOT EXISTS madlib CASCADE;
+
+-- MADlib Python modules need to be on sys.path for PL/Python functions.
+-- The CREATE EXTENSION doesn't always set this up, so we symlink them
+-- into every Python site-packages directory we can find.
+DO $$
+import os, glob, sys
+src = '/usr/local/greenplum-db-7.7.0/share/postgresql/madlib/modules'
+# Try multiple possible site-packages locations
+targets = [
+    '/usr/local/lib64/python3.11/site-packages',
+    '/usr/local/lib64/python3.9/site-packages',
+    '/usr/lib64/python3.9/site-packages',
+    '/usr/local/lib/python3.9/site-packages',
+    '/usr/lib/python3.9/site-packages',
+]
+# Also add to current sys.path as fallback
+if os.path.isdir(src) and src not in sys.path:
+    sys.path.insert(0, src)
+for dst in targets:
+    if os.path.isdir(src) and os.path.isdir(dst):
+        for d in glob.glob(os.path.join(src, '*')):
+            target = os.path.join(dst, os.path.basename(d))
+            if not os.path.exists(target):
+                try:
+                    os.symlink(d, target)
+                except:
+                    pass
+$$ LANGUAGE plpython3u;
+
+-- =============================================================================
+-- TRAINING DATA: Synthetic labeled observations for logistic regression
+-- Each row = one equipment snapshot with known failure outcome.
+-- Features match the equipment_ml_features view normalization.
+-- =============================================================================
+CREATE TABLE ml_training_data (
+    observation_id SERIAL PRIMARY KEY,
+    vibration_normalized DOUBLE PRECISION NOT NULL,   -- avg_vibration / 5.0
+    temperature_normalized DOUBLE PRECISION NOT NULL, -- avg_temperature / 85.0
+    vibration_trend_rate DOUBLE PRECISION NOT NULL,   -- per-hour, clamped [-0.5, 0.5]
+    temperature_trend_rate DOUBLE PRECISION NOT NULL,  -- per-hour, clamped [-1.0, 1.0]
+    days_since_maintenance DOUBLE PRECISION NOT NULL,  -- capped at 90
+    equipment_age_years DOUBLE PRECISION NOT NULL,     -- capped at 20
+    anomaly_count INTEGER NOT NULL,
+    power_normalized DOUBLE PRECISION NOT NULL DEFAULT 0.3,       -- avg_power / 50.0
+    rpm_normalized DOUBLE PRECISION NOT NULL DEFAULT 0.85,        -- avg_rpm / 10000.0
+    pressure_normalized DOUBLE PRECISION NOT NULL DEFAULT 0.6,    -- avg_pressure / 10.0
+    torque_normalized DOUBLE PRECISION NOT NULL DEFAULT 0.56,     -- avg_torque / 80.0
+    failed INTEGER NOT NULL  -- 0 = survived, 1 = failed
+);
+
+-- Seed synthetic training data: ~500 observations
+-- Normal operation (failed=0): low vibration/temp, stable trends
+-- Pre-failure (failed=1): elevated vibration/temp, rising trends, anomalies
+-- Each failure pattern has distinct sensor signatures across all 6 sensor types.
+DO $$
+DECLARE
+    i INTEGER;
+    vib DOUBLE PRECISION;
+    temp DOUBLE PRECISION;
+    vib_trend DOUBLE PRECISION;
+    temp_trend DOUBLE PRECISION;
+    days_maint DOUBLE PRECISION;
+    age DOUBLE PRECISION;
+    anomalies INTEGER;
+    pwr DOUBLE PRECISION;
+    rpm DOUBLE PRECISION;
+    pres DOUBLE PRECISION;
+    trq DOUBLE PRECISION;
+BEGIN
+    -- === NORMAL OPERATION SAMPLES (350 rows, failed=0) ===
+    FOR i IN 1..350 LOOP
+        vib := 0.30 + random() * 0.25;           -- 0.30-0.55 (1.5-2.75 mm/s)
+        temp := 0.50 + random() * 0.22;          -- 0.50-0.72 (42-61°C)
+        vib_trend := (random() - 0.5) * 0.1;
+        temp_trend := (random() - 0.5) * 0.2;
+        days_maint := 5 + random() * 55;
+        age := 0.5 + random() * 7.5;
+        anomalies := CASE WHEN random() < 0.05 THEN 1 ELSE 0 END;
+        pwr := 0.25 + random() * 0.15;           -- 0.25-0.40 (12.5-20 kW)
+        rpm := 0.80 + random() * 0.10;           -- 0.80-0.90 (8000-9000 RPM)
+        pres := 0.55 + random() * 0.10;          -- 0.55-0.65 (5.5-6.5 bar)
+        trq := 0.50 + random() * 0.15;           -- 0.50-0.65 (40-52 Nm)
+
+        INSERT INTO ml_training_data (vibration_normalized, temperature_normalized,
+            vibration_trend_rate, temperature_trend_rate, days_since_maintenance,
+            equipment_age_years, anomaly_count, power_normalized, rpm_normalized,
+            pressure_normalized, torque_normalized, failed)
+        VALUES (vib, temp, vib_trend, temp_trend, days_maint, age, anomalies,
+                pwr, rpm, pres, trq, 0);
+    END LOOP;
+
+    -- === PRE-FAILURE SAMPLES (150 rows, failed=1) ===
+
+    -- Bearing degradation (60 rows): high vibration, moderate temp, elevated torque
+    FOR i IN 1..60 LOOP
+        vib := 0.65 + random() * 0.35;           -- 0.65-1.0 (3.25-5.0 mm/s)
+        temp := 0.60 + random() * 0.30;          -- 0.60-0.90
+        vib_trend := 0.10 + random() * 0.35;
+        temp_trend := 0.05 + random() * 0.25;
+        days_maint := 30 + random() * 60;
+        age := 2.0 + random() * 10.0;
+        anomalies := CASE WHEN random() < 0.3 THEN 0 WHEN random() < 0.7 THEN 1 ELSE 2 END;
+        pwr := 0.30 + random() * 0.20;           -- 0.30-0.50 (slightly elevated)
+        rpm := 0.75 + random() * 0.15;           -- 0.75-0.90 (normal-ish)
+        pres := 0.50 + random() * 0.15;          -- 0.50-0.65 (normal)
+        trq := 0.60 + random() * 0.25;           -- 0.60-0.85 (elevated torque)
+
+        INSERT INTO ml_training_data (vibration_normalized, temperature_normalized,
+            vibration_trend_rate, temperature_trend_rate, days_since_maintenance,
+            equipment_age_years, anomaly_count, power_normalized, rpm_normalized,
+            pressure_normalized, torque_normalized, failed)
+        VALUES (vib, temp, vib_trend, temp_trend, days_maint, age, anomalies,
+                pwr, rpm, pres, trq, 1);
+    END LOOP;
+
+    -- Motor burnout (40 rows): extreme temperature, high power draw, RPM drops
+    FOR i IN 1..40 LOOP
+        vib := 0.45 + random() * 0.30;
+        temp := 0.80 + random() * 0.20;          -- 0.80-1.0 (68-85°C)
+        vib_trend := (random() - 0.3) * 0.2;
+        temp_trend := 0.20 + random() * 0.60;
+        days_maint := 20 + random() * 70;
+        age := 3.0 + random() * 12.0;
+        anomalies := CASE WHEN random() < 0.4 THEN 1 ELSE 2 END;
+        pwr := 0.60 + random() * 0.30;           -- 0.60-0.90 (high power)
+        rpm := 0.60 + random() * 0.20;           -- 0.60-0.80 (RPM dropping)
+        pres := 0.50 + random() * 0.15;          -- 0.50-0.65 (normal)
+        trq := 0.55 + random() * 0.20;           -- 0.55-0.75 (moderate)
+
+        INSERT INTO ml_training_data (vibration_normalized, temperature_normalized,
+            vibration_trend_rate, temperature_trend_rate, days_since_maintenance,
+            equipment_age_years, anomaly_count, power_normalized, rpm_normalized,
+            pressure_normalized, torque_normalized, failed)
+        VALUES (vib, temp, vib_trend, temp_trend, days_maint, age, anomalies,
+                pwr, rpm, pres, trq, 1);
+    END LOOP;
+
+    -- Electrical fault (20 rows): power spikes, RPM instability, moderate vibration
+    FOR i IN 1..20 LOOP
+        vib := 0.50 + random() * 0.30;           -- 0.50-0.80
+        temp := 0.60 + random() * 0.25;          -- 0.60-0.85
+        vib_trend := 0.05 + random() * 0.20;
+        temp_trend := 0.10 + random() * 0.30;
+        days_maint := 15 + random() * 60;
+        age := 1.0 + random() * 12.0;
+        anomalies := 1 + floor(random() * 2)::INTEGER;
+        pwr := 0.70 + random() * 0.30;           -- 0.70-1.0 (power spikes!)
+        rpm := 0.50 + random() * 0.25;           -- 0.50-0.75 (RPM drops)
+        pres := 0.45 + random() * 0.15;          -- 0.45-0.60 (slightly low)
+        trq := 0.50 + random() * 0.20;           -- 0.50-0.70 (normal-ish)
+
+        INSERT INTO ml_training_data (vibration_normalized, temperature_normalized,
+            vibration_trend_rate, temperature_trend_rate, days_since_maintenance,
+            equipment_age_years, anomaly_count, power_normalized, rpm_normalized,
+            pressure_normalized, torque_normalized, failed)
+        VALUES (vib, temp, vib_trend, temp_trend, days_maint, age, anomalies,
+                pwr, rpm, pres, trq, 1);
+    END LOOP;
+
+    -- Coolant failure (15 rows): high temp, low pressure, normal vibration
+    FOR i IN 1..15 LOOP
+        vib := 0.35 + random() * 0.25;           -- 0.35-0.60 (relatively normal)
+        temp := 0.75 + random() * 0.25;          -- 0.75-1.0 (high temp)
+        vib_trend := (random() - 0.3) * 0.15;
+        temp_trend := 0.15 + random() * 0.50;    -- rising temp
+        days_maint := 25 + random() * 65;
+        age := 2.0 + random() * 10.0;
+        anomalies := floor(random() * 2)::INTEGER;
+        pwr := 0.30 + random() * 0.20;           -- 0.30-0.50 (normal)
+        rpm := 0.80 + random() * 0.10;           -- 0.80-0.90 (normal)
+        pres := 0.30 + random() * 0.20;          -- 0.30-0.50 (LOW pressure!)
+        trq := 0.50 + random() * 0.15;           -- 0.50-0.65 (normal)
+
+        INSERT INTO ml_training_data (vibration_normalized, temperature_normalized,
+            vibration_trend_rate, temperature_trend_rate, days_since_maintenance,
+            equipment_age_years, anomaly_count, power_normalized, rpm_normalized,
+            pressure_normalized, torque_normalized, failed)
+        VALUES (vib, temp, vib_trend, temp_trend, days_maint, age, anomalies,
+                pwr, rpm, pres, trq, 1);
+    END LOOP;
+
+    -- Spindle wear (15 rows): vibration + high torque, RPM drops
+    FOR i IN 1..15 LOOP
+        vib := 0.55 + random() * 0.35;           -- 0.55-0.90
+        temp := 0.60 + random() * 0.25;          -- 0.60-0.85
+        vib_trend := 0.08 + random() * 0.25;
+        temp_trend := 0.05 + random() * 0.25;
+        days_maint := 35 + random() * 55;
+        age := 3.0 + random() * 12.0;
+        anomalies := floor(random() * 3)::INTEGER;
+        pwr := 0.35 + random() * 0.20;           -- 0.35-0.55 (slightly elevated)
+        rpm := 0.65 + random() * 0.15;           -- 0.65-0.80 (RPM dropping)
+        pres := 0.50 + random() * 0.10;          -- 0.50-0.60 (normal)
+        trq := 0.70 + random() * 0.25;           -- 0.70-0.95 (HIGH torque!)
+
+        INSERT INTO ml_training_data (vibration_normalized, temperature_normalized,
+            vibration_trend_rate, temperature_trend_rate, days_since_maintenance,
+            equipment_age_years, anomaly_count, power_normalized, rpm_normalized,
+            pressure_normalized, torque_normalized, failed)
+        VALUES (vib, temp, vib_trend, temp_trend, days_maint, age, anomalies,
+                pwr, rpm, pres, trq, 1);
+    END LOOP;
+END $$;
+
+-- =============================================================================
+-- TRAINING FUNCTION: Runs MADlib logistic regression and updates coefficients
+-- =============================================================================
+CREATE OR REPLACE FUNCTION train_failure_model()
+RETURNS TABLE(feature TEXT, coefficient DOUBLE PRECISION) AS $$
+DECLARE
+    coef_array DOUBLE PRECISION[];
+    feature_names TEXT[] := ARRAY[
+        'vibration_normalized', 'temperature_normalized',
+        'vibration_trend_rate', 'temperature_trend_rate',
+        'days_since_maintenance', 'equipment_age_years',
+        'anomaly_count',
+        'power_normalized', 'rpm_normalized',
+        'pressure_normalized', 'torque_normalized'
+    ];
+    intercept_val DOUBLE PRECISION;
+    i INTEGER;
+BEGIN
+    -- Drop previous training artifacts
+    DROP TABLE IF EXISTS failure_model CASCADE;
+    DROP TABLE IF EXISTS failure_model_summary CASCADE;
+
+    -- Run MADlib logistic regression
+    PERFORM madlib.logregr_train(
+        'ml_training_data',                          -- source table
+        'failure_model',                             -- output table
+        'failed',                                    -- dependent variable
+        'ARRAY[1, vibration_normalized, temperature_normalized, vibration_trend_rate, temperature_trend_rate, days_since_maintenance, equipment_age_years, anomaly_count, power_normalized, rpm_normalized, pressure_normalized, torque_normalized]',
+        NULL,                                        -- grouping columns
+        20,                                          -- max iterations
+        'irls'                                       -- optimizer
+    );
+
+    -- Extract coefficients
+    SELECT coef INTO coef_array FROM failure_model;
+
+    -- Update ml_model_coefficients table
+    DELETE FROM ml_model_coefficients WHERE model_id = 'failure_predictor_v1';
+
+    -- Intercept is first element (index 1 in PG arrays)
+    intercept_val := coef_array[1];
+    INSERT INTO ml_model_coefficients (model_id, model_type, feature_name, coefficient, description)
+    VALUES ('failure_predictor_v1', 'logistic_regression', 'intercept',
+            ROUND(intercept_val::numeric, 4), 'MADlib-trained intercept');
+
+    feature := 'intercept';
+    coefficient := ROUND(intercept_val::numeric, 4);
+    RETURN NEXT;
+
+    -- Feature coefficients (indices 2..12)
+    FOR i IN 1..11 LOOP
+        INSERT INTO ml_model_coefficients (model_id, model_type, feature_name, coefficient, description)
+        VALUES ('failure_predictor_v1', 'logistic_regression', feature_names[i],
+                ROUND(coef_array[i+1]::numeric, 4),
+                'MADlib-trained from ' || (SELECT COUNT(*) FROM ml_training_data) || ' observations');
+
+        feature := feature_names[i];
+        coefficient := ROUND(coef_array[i+1]::numeric, 4);
+        RETURN NEXT;
+    END LOOP;
+
+    RETURN;
+END;
+$$ LANGUAGE plpgsql;
+
+-- =============================================================================
+-- INITIAL TRAINING: Run MADlib to produce real coefficients
+-- =============================================================================
+SELECT * FROM train_failure_model();
 
 -- =============================================================================
 -- FEATURE ENGINEERING VIEW
@@ -1322,7 +1615,8 @@ INSERT INTO ml_model_coefficients (model_id, model_type, feature_name, coefficie
 
 CREATE OR REPLACE VIEW equipment_ml_features AS
 WITH sensor_stats AS (
-    -- Get recent sensor statistics (last 168 hours)
+    -- Use 3-minute window for responsive demo-paced predictions
+    -- Require minimum 20 data points for reliable trend calculation
     SELECT
         equipment_id,
         sensor_type,
@@ -1330,10 +1624,13 @@ WITH sensor_stats AS (
         MAX(value) as max_value,
         MIN(value) as min_value,
         STDDEV(value) as std_value,
-        -- Calculate trend using linear regression
-        REGR_SLOPE(value, EXTRACT(EPOCH FROM time)) as trend_rate
+        COUNT(*) as reading_count,
+        CASE WHEN COUNT(*) >= 20
+            THEN REGR_SLOPE(value, EXTRACT(EPOCH FROM time))
+            ELSE 0
+        END as trend_rate
     FROM sensor_readings
-    WHERE time >= NOW() - INTERVAL '168 hours'
+    WHERE time >= NOW() - INTERVAL '3 minutes'
     GROUP BY equipment_id, sensor_type
 ),
 vibration_stats AS (
@@ -1341,6 +1638,18 @@ vibration_stats AS (
 ),
 temperature_stats AS (
     SELECT * FROM sensor_stats WHERE sensor_type = 'temperature'
+),
+power_stats AS (
+    SELECT * FROM sensor_stats WHERE sensor_type IN ('power', 'power_draw')
+),
+rpm_stats AS (
+    SELECT * FROM sensor_stats WHERE sensor_type = 'spindle_speed'
+),
+pressure_stats AS (
+    SELECT * FROM sensor_stats WHERE sensor_type = 'pressure'
+),
+torque_stats AS (
+    SELECT * FROM sensor_stats WHERE sensor_type = 'torque'
 ),
 anomaly_counts AS (
     SELECT equipment_id, COUNT(*) as anomaly_count
@@ -1355,11 +1664,15 @@ SELECT
     -- Normalized features (scaled to 0-1 range for model)
     COALESCE(v.avg_value / 5.0, 0.5) as vibration_normalized,  -- 5.0 mm/s is critical threshold
     COALESCE(t.avg_value / 85.0, 0.5) as temperature_normalized,  -- 85°C is critical threshold
-    COALESCE(v.trend_rate * 3600, 0) as vibration_trend_rate,  -- Convert to per-hour rate
-    COALESCE(t.trend_rate * 3600, 0) as temperature_trend_rate,
-    COALESCE(EXTRACT(DAY FROM NOW() - e.last_maintenance::timestamp), 0) as days_since_maintenance,
+    LEAST(GREATEST(COALESCE(v.trend_rate * 3600, 0), -0.5), 0.5) as vibration_trend_rate,
+    LEAST(GREATEST(COALESCE(t.trend_rate * 3600, 0), -1.0), 1.0) as temperature_trend_rate,
+    LEAST(COALESCE(EXTRACT(DAY FROM NOW() - e.last_maintenance::timestamp), 0), 90) as days_since_maintenance,
     COALESCE(EXTRACT(YEAR FROM NOW()) - EXTRACT(YEAR FROM e.install_date::date), 0) as equipment_age_years,
     COALESCE(ac.anomaly_count, 0) as anomaly_count,
+    COALESCE(p.avg_value / 50.0, 0.3) as power_normalized,      -- 50 kW max
+    COALESCE(r.avg_value / 10000.0, 0.85) as rpm_normalized,    -- 10000 RPM max
+    COALESCE(pr.avg_value / 10.0, 0.6) as pressure_normalized,  -- 10 bar max
+    COALESCE(tq.avg_value / 80.0, 0.56) as torque_normalized,   -- 80 Nm max
     -- Raw values for display
     COALESCE(v.avg_value, 0) as vibration_avg,
     COALESCE(v.max_value, 0) as vibration_max,
@@ -1368,6 +1681,10 @@ SELECT
 FROM equipment e
 LEFT JOIN vibration_stats v ON e.equipment_id = v.equipment_id
 LEFT JOIN temperature_stats t ON e.equipment_id = t.equipment_id
+LEFT JOIN power_stats p ON e.equipment_id = p.equipment_id
+LEFT JOIN rpm_stats r ON e.equipment_id = r.equipment_id
+LEFT JOIN pressure_stats pr ON e.equipment_id = pr.equipment_id
+LEFT JOIN torque_stats tq ON e.equipment_id = tq.equipment_id
 LEFT JOIN anomaly_counts ac ON e.equipment_id = ac.equipment_id;
 
 -- =============================================================================
@@ -1396,6 +1713,10 @@ DECLARE
     v_maint_coef DOUBLE PRECISION;
     v_age_coef DOUBLE PRECISION;
     v_anomaly_coef DOUBLE PRECISION;
+    v_power_coef DOUBLE PRECISION;
+    v_rpm_coef DOUBLE PRECISION;
+    v_pressure_coef DOUBLE PRECISION;
+    v_torque_coef DOUBLE PRECISION;
     v_features RECORD;
     v_logit DOUBLE PRECISION;
     v_prob DOUBLE PRECISION;
@@ -1417,6 +1738,14 @@ BEGIN
         WHERE model_id = 'failure_predictor_v1' AND feature_name = 'equipment_age_years';
     SELECT coefficient INTO v_anomaly_coef FROM ml_model_coefficients
         WHERE model_id = 'failure_predictor_v1' AND feature_name = 'anomaly_count';
+    SELECT coefficient INTO v_power_coef FROM ml_model_coefficients
+        WHERE model_id = 'failure_predictor_v1' AND feature_name = 'power_normalized';
+    SELECT coefficient INTO v_rpm_coef FROM ml_model_coefficients
+        WHERE model_id = 'failure_predictor_v1' AND feature_name = 'rpm_normalized';
+    SELECT coefficient INTO v_pressure_coef FROM ml_model_coefficients
+        WHERE model_id = 'failure_predictor_v1' AND feature_name = 'pressure_normalized';
+    SELECT coefficient INTO v_torque_coef FROM ml_model_coefficients
+        WHERE model_id = 'failure_predictor_v1' AND feature_name = 'torque_normalized';
 
     -- Get equipment features
     SELECT * INTO v_features FROM equipment_ml_features f WHERE f.equipment_id = p_equipment_id;
@@ -1439,11 +1768,15 @@ BEGIN
     v_logit := v_intercept
         + v_vibration_coef * v_features.vibration_normalized
         + v_temp_coef * v_features.temperature_normalized
-        + v_vib_trend_coef * GREATEST(v_features.vibration_trend_rate, 0)  -- Only positive trends increase risk
+        + v_vib_trend_coef * GREATEST(v_features.vibration_trend_rate, 0)
         + v_temp_trend_coef * GREATEST(v_features.temperature_trend_rate, 0)
         + v_maint_coef * v_features.days_since_maintenance
         + v_age_coef * v_features.equipment_age_years
-        + v_anomaly_coef * v_features.anomaly_count;
+        + v_anomaly_coef * v_features.anomaly_count
+        + v_power_coef * v_features.power_normalized
+        + v_rpm_coef * v_features.rpm_normalized
+        + v_pressure_coef * v_features.pressure_normalized
+        + v_torque_coef * v_features.torque_normalized;
 
     -- Apply sigmoid function: P = 1 / (1 + exp(-logit))
     v_prob := 1.0 / (1.0 + exp(-v_logit));

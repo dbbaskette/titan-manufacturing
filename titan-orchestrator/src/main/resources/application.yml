@@ -32,9 +32,6 @@ spring:
         type: SYNC
         request-timeout: 120s
         # Connection retry settings for late-starting MCP servers
-        sse:
-          connections:
-            # SSE connections would go here if needed
         toolcallback:
           enabled: true
         streamable-http:
@@ -56,15 +53,12 @@ spring:
             logistics-tools:
               url: ${MCP_SERVERS_LOGISTICS:http://localhost:8084}
               endpoint: /mcp
-            order-tools:
-              url: ${MCP_SERVERS_ORDER:http://localhost:8085}
-              endpoint: /mcp
-            communications-tools:
-              url: ${MCP_SERVERS_COMMUNICATIONS:http://localhost:8086}
-              endpoint: /mcp
-            governance-tools:
-              url: ${MCP_SERVERS_GOVERNANCE:http://localhost:8087}
-              endpoint: /mcp
+            # order-tools, communications-tools, governance-tools disabled until /mcp endpoint configured
+
+# Titan service URLs
+titan:
+  maintenance:
+    url: ${MAINTENANCE_URL:http://localhost:8082}
 
 # Embabel agent configuration
 embabel:

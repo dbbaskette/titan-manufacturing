@@ -1,5 +1,3 @@
-version: '3.8'
-
 # =============================================================================
 # TITAN MANUFACTURING — Titan 5.0 AI Platform
 # "Forging the future with intelligent manufacturing"
@@ -7,6 +5,31 @@ version: '3.8'
 # Simplified architecture: Greenplum as single data store
 # RabbitMQ provides both AMQP and MQTT (via plugin)
 # =============================================================================
+
+# =============================================================================
+# YAML ANCHORS - DRY Configuration
+# =============================================================================
+x-greenplum-env: &greenplum-env
+  GREENPLUM_URL: jdbc:postgresql://greenplum:5432/titan-manufacturing
+  GREENPLUM_USER: ${GREENPLUM_USER:-gpadmin}
+  GREENPLUM_PASSWORD: ${GREENPLUM_PASSWORD:-VMware1!}
+
+x-mqtt-env: &mqtt-env
+  MQTT_BROKER: tcp://rabbitmq:1883
+  MQTT_USER: ${RABBITMQ_USER:-titan}
+  MQTT_PASS: ${RABBITMQ_PASSWORD:-titan5.0}
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-healthcheck-spring: &healthcheck-spring
+  interval: 10s
+  timeout: 5s
+  retries: 5
+  start_period: 30s
 
 services:
   # ===========================================================================
@@ -22,7 +45,7 @@ services:
     ports:
       - "15432:5432"
     environment:
-      - PGPASSWORD=VMware1!
+      - PGPASSWORD=${GREENPLUM_PASSWORD:-VMware1!}
     volumes:
       - greenplum-data:/data
       - ./config/greenplum/init.sql:/init.sql:ro
@@ -32,6 +55,16 @@ services:
       timeout: 5s
       retries: 10
       start_period: 60s
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
     networks:
       - titan-network
 
@@ -59,6 +92,7 @@ services:
         else
           echo "Database titan-manufacturing already exists, skipping init."
         fi
+    logging: *default-logging
     networks:
       - titan-network
 
@@ -72,8 +106,8 @@ services:
       - "15672:15672"   # Management UI
       - "1883:1883"     # MQTT (via plugin)
     environment:
-      - RABBITMQ_DEFAULT_USER=titan
-      - RABBITMQ_DEFAULT_PASS=titan5.0
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER:-titan}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD:-titan5.0}
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
       - ./config/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins
@@ -82,6 +116,16 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 256M
     networks:
       - titan-network
 
@@ -110,6 +154,7 @@ services:
       - MCP_SERVERS_ORDER=http://order-mcp-server:8085
       - MCP_SERVERS_COMMUNICATIONS=http://communications-mcp-server:8086
       - MCP_SERVERS_GOVERNANCE=http://governance-mcp-server:8087
+      - MAINTENANCE_URL=http://maintenance-mcp-server:8082
     depends_on:
       greenplum:
         condition: service_healthy
@@ -130,6 +175,16 @@ services:
         condition: service_healthy
       governance-mcp-server:
         condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
     networks:
       - titan-network
     profiles:
@@ -145,14 +200,9 @@ services:
     ports:
       - "8081:8081"
     environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - GREENPLUM_URL=jdbc:postgresql://greenplum:5432/titan-manufacturing
-      - GREENPLUM_USER=gpadmin
-      - GREENPLUM_PASSWORD=VMware1!
-      - MQTT_BROKER=tcp://rabbitmq:1883
-      - MQTT_USER=titan
-      - MQTT_PASS=titan5.0
-      - MQTT_ENABLED=true
+      SPRING_PROFILES_ACTIVE: docker
+      <<: [*greenplum-env, *mqtt-env]
+      MQTT_ENABLED: "true"
     depends_on:
       greenplum-init:
         condition: service_completed_successfully
@@ -160,10 +210,17 @@ services:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8081/actuator/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
+      <<: *healthcheck-spring
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
     networks:
       - titan-network
     profiles:
@@ -172,22 +229,32 @@ services:
   maintenance-mcp-server:
     build: ./maintenance-mcp-server
     container_name: titan-maintenance-agent
+    hostname: maintenance-mcp-server
     ports:
       - "8082:8082"
     environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - GREENPLUM_URL=jdbc:postgresql://greenplum:5432/titan-manufacturing
-      - GREENPLUM_USER=gpadmin
-      - GREENPLUM_PASSWORD=VMware1!
+      SPRING_PROFILES_ACTIVE: docker
+      <<: [*greenplum-env, *mqtt-env]
+      GEMFIRE_LOCATOR_HOST: gemfire
+      GEMFIRE_LOCATOR_PORT: "10334"
     depends_on:
       greenplum-init:
         condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8082/actuator/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
+      <<: *healthcheck-spring
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
     networks:
       - titan-network
     profiles:
@@ -199,16 +266,24 @@ services:
     ports:
       - "8090:8090"
     environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - MQTT_BROKER=tcp://rabbitmq:1883
-      - MQTT_USER=titan
-      - MQTT_PASS=titan5.0
-      - EQUIPMENT_COUNT=30
-      - FACILITIES=PHX,MUC,SHA,DET,ATL
-      - INTERVAL_MS=5000
+      SPRING_PROFILES_ACTIVE: docker
+      <<: *mqtt-env
+      EQUIPMENT_COUNT: "72"
+      FACILITIES: PHX,MUC,SHA,DET,ATL,DAL,LYN,MAN,MEX,SEO,SYD,TYO
+      INTERVAL_MS: "5000"
     depends_on:
       rabbitmq:
         condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
     networks:
       - titan-network
     profiles:
@@ -221,19 +296,24 @@ services:
     ports:
       - "8083:8083"
     environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - GREENPLUM_URL=jdbc:postgresql://greenplum:5432/titan-manufacturing
-      - GREENPLUM_USER=gpadmin
-      - GREENPLUM_PASSWORD=VMware1!
+      SPRING_PROFILES_ACTIVE: docker
+      <<: *greenplum-env
     depends_on:
       greenplum-init:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8083/actuator/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
+      <<: *healthcheck-spring
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
     networks:
       - titan-network
     profiles:
@@ -246,19 +326,24 @@ services:
     ports:
       - "8084:8084"
     environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - GREENPLUM_URL=jdbc:postgresql://greenplum:5432/titan-manufacturing
-      - GREENPLUM_USER=gpadmin
-      - GREENPLUM_PASSWORD=VMware1!
+      SPRING_PROFILES_ACTIVE: docker
+      <<: *greenplum-env
     depends_on:
       greenplum-init:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8084/actuator/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
+      <<: *healthcheck-spring
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
     networks:
       - titan-network
     profiles:
@@ -274,19 +359,24 @@ services:
     ports:
       - "8085:8085"
     environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - GREENPLUM_URL=jdbc:postgresql://greenplum:5432/titan-manufacturing
-      - GREENPLUM_USER=gpadmin
-      - GREENPLUM_PASSWORD=VMware1!
+      SPRING_PROFILES_ACTIVE: docker
+      <<: *greenplum-env
     depends_on:
       greenplum-init:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8085/actuator/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
+      <<: *healthcheck-spring
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
     networks:
       - titan-network
     profiles:
@@ -299,19 +389,24 @@ services:
     ports:
       - "8086:8086"
     environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - GREENPLUM_URL=jdbc:postgresql://greenplum:5432/titan-manufacturing
-      - GREENPLUM_USER=gpadmin
-      - GREENPLUM_PASSWORD=VMware1!
+      SPRING_PROFILES_ACTIVE: docker
+      <<: *greenplum-env
     depends_on:
       greenplum-init:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8086/actuator/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
+      <<: *healthcheck-spring
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
     networks:
       - titan-network
     profiles:
@@ -324,21 +419,26 @@ services:
     ports:
       - "8087:8087"
     environment:
-      - SPRING_PROFILES_ACTIVE=docker
-      - GREENPLUM_URL=jdbc:postgresql://greenplum:5432/titan-manufacturing
-      - GREENPLUM_USER=gpadmin
-      - GREENPLUM_PASSWORD=VMware1!
-      - OPENMETADATA_URL=${OPENMETADATA_URL:-http://localhost:8585}
-      - OPENMETADATA_TOKEN=${OPENMETADATA_TOKEN:-}
+      SPRING_PROFILES_ACTIVE: docker
+      <<: *greenplum-env
+      OPENMETADATA_URL: ${OPENMETADATA_URL:-http://localhost:8585}
+      OPENMETADATA_TOKEN: ${OPENMETADATA_TOKEN:-}
     depends_on:
       greenplum-init:
         condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8087/actuator/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
+      <<: *healthcheck-spring
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
     networks:
       - titan-network
     profiles:
@@ -357,8 +457,8 @@ services:
       - OPENMETADATA_CLUSTER_NAME=titan-manufacturing
       - DB_HOST=openmetadata-mysql
       - DB_PORT=3306
-      - DB_USER=openmetadata
-      - DB_USER_PASSWORD=openmetadata
+      - DB_USER=${MYSQL_USER:-openmetadata}
+      - DB_USER_PASSWORD=${MYSQL_PASSWORD:-openmetadata}
       - DB_DRIVER_CLASS=com.mysql.cj.jdbc.Driver
       - SEARCH_HOST=openmetadata-elasticsearch
       - SEARCH_PORT=9200
@@ -374,6 +474,16 @@ services:
       timeout: 10s
       retries: 5
       start_period: 120s
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
     networks:
       - titan-network
     profiles:
@@ -383,10 +493,10 @@ services:
     image: mysql:8.0
     container_name: titan-openmetadata-mysql
     environment:
-      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-root}
       - MYSQL_DATABASE=openmetadata
-      - MYSQL_USER=openmetadata
-      - MYSQL_PASSWORD=openmetadata
+      - MYSQL_USER=${MYSQL_USER:-openmetadata}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-openmetadata}
     volumes:
       - openmetadata-mysql-data:/var/lib/mysql
     healthcheck:
@@ -394,6 +504,16 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
     networks:
       - titan-network
     profiles:
@@ -413,10 +533,60 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 512M
     networks:
       - titan-network
     profiles:
       - governance
+
+  # ===========================================================================
+  # GEMFIRE (Real-time ML scoring with PMML)
+  # Enable with: docker-compose --profile gemfire up
+  # Pulse UI: http://localhost:7070
+  # ===========================================================================
+  gemfire:
+    build:
+      context: ../gemfire-sne
+    image: gemfire-sne
+    container_name: titan-gemfire
+    ports:
+      - "10334:10334"   # Locator
+      - "40404:40404"   # Server
+      - "7070:7070"     # Pulse web UI
+    environment:
+      - JAVA_OPTS=-Xmx2g
+    volumes:
+      - gemfire-data:/data
+      - ./config/gemfire/entrypoint.sh:/entrypoint.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:7070/pulse/login.html || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 3G
+        reservations:
+          cpus: '0.5'
+          memory: 2G
+    networks:
+      - titan-network
+    profiles:
+      - gemfire
 
   # ===========================================================================
   # OBSERVABILITY (Optional)
@@ -428,9 +598,19 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=titan5.0
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-titan5.0}
     volumes:
       - grafana-data:/var/lib/grafana
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 256M
     networks:
       - titan-network
     profiles:
@@ -443,6 +623,16 @@ services:
       - "9090:9090"
     volumes:
       - prometheus-data:/prometheus
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 256M
     networks:
       - titan-network
     profiles:
@@ -465,6 +655,16 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
     networks:
       - titan-network
     profiles:
@@ -481,3 +681,4 @@ volumes:
   prometheus-data:
   openmetadata-mysql-data:
   openmetadata-es-data:
+  gemfire-data:

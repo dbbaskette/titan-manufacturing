@@ -4,6 +4,13 @@
 
 import { useState } from 'react';
 import {
+  ComposableMap,
+  Geographies,
+  Geography,
+  Marker,
+  Line,
+} from 'react-simple-maps';
+import {
   Globe,
   AlertTriangle,
   Wrench,
@@ -14,6 +21,9 @@ import {
 } from 'lucide-react';
 import type { Facility } from '../types';
 import { MOCK_FACILITIES } from '../api/titanApi';
+
+// Natural Earth 110m TopoJSON — lightweight world boundaries
+const GEO_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json';
 
 interface GlobalOverviewProps {
   onFacilitySelect: (facility: Facility) => void;
@@ -38,12 +48,8 @@ export function GlobalOverview({ onFacilitySelect }: GlobalOverviewProps) {
     LATAM: facilities.filter(f => f.region === 'LATAM'),
   };
 
-  // Convert lat/lng to SVG coordinates (simple mercator-ish projection)
-  const coordToSvg = (lat: number, lng: number) => {
-    const x = ((lng + 180) / 360) * 800 + 50;
-    const y = ((90 - lat) / 180) * 400 + 20;
-    return { x, y };
-  };
+  const getStatusColor = (status: string) =>
+    status === 'critical' ? '#ef4444' : status === 'warning' ? '#f59e0b' : '#ff6b00';
 
   return (
     <div className="space-y-6 fade-in">
@@ -119,87 +125,48 @@ export function GlobalOverview({ onFacilitySelect }: GlobalOverviewProps) {
           <Activity size={16} />
           Facility Network
         </div>
-        <div className="relative p-6" style={{ height: '450px' }}>
-          {/* SVG World Map */}
-          <svg
-            viewBox="0 0 900 460"
-            className="w-full h-full"
-            style={{ filter: 'drop-shadow(0 0 20px rgba(255, 107, 0, 0.1))' }}
+        <div className="relative" style={{ height: '450px' }}>
+          <ComposableMap
+            projection="geoMercator"
+            projectionConfig={{
+              scale: 130,
+              center: [20, 20],
+            }}
+            style={{ width: '100%', height: '100%' }}
           >
-            {/* Grid lines */}
-            <defs>
-              <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-                <path
-                  d="M 40 0 L 0 0 0 40"
-                  fill="none"
-                  stroke="rgba(255, 107, 0, 0.05)"
-                  strokeWidth="0.5"
-                />
-              </pattern>
-            </defs>
-            <rect width="100%" height="100%" fill="url(#grid)" />
+            {/* Country boundaries */}
+            <Geographies geography={GEO_URL}>
+              {({ geographies }) =>
+                geographies.map((geo) => (
+                  <Geography
+                    key={geo.rsmKey}
+                    geography={geo}
+                    fill="rgba(255, 107, 0, 0.08)"
+                    stroke="rgba(255, 107, 0, 0.2)"
+                    strokeWidth={0.5}
+                    style={{
+                      default: { outline: 'none' },
+                      hover: { outline: 'none', fill: 'rgba(255, 107, 0, 0.12)' },
+                      pressed: { outline: 'none' },
+                    }}
+                  />
+                ))
+              }
+            </Geographies>
 
-            {/* Simplified continent outlines */}
-            {/* North America */}
-            <path
-              d="M 80,80 Q 120,60 180,70 Q 220,80 240,120 Q 250,160 230,200 Q 200,220 160,210 Q 120,200 100,160 Q 80,120 80,80"
-              fill="rgba(255, 107, 0, 0.08)"
-              stroke="rgba(255, 107, 0, 0.2)"
-              strokeWidth="1"
-            />
-            {/* South America */}
-            <path
-              d="M 180,240 Q 200,230 220,260 Q 230,300 220,350 Q 200,380 180,370 Q 160,350 165,300 Q 170,260 180,240"
-              fill="rgba(255, 107, 0, 0.08)"
-              stroke="rgba(255, 107, 0, 0.2)"
-              strokeWidth="1"
-            />
-            {/* Europe */}
-            <path
-              d="M 420,80 Q 460,70 500,80 Q 520,100 510,130 Q 490,150 450,140 Q 420,130 410,100 Q 415,85 420,80"
-              fill="rgba(255, 107, 0, 0.08)"
-              stroke="rgba(255, 107, 0, 0.2)"
-              strokeWidth="1"
-            />
-            {/* Africa */}
-            <path
-              d="M 450,160 Q 490,150 520,180 Q 530,240 510,300 Q 480,340 450,330 Q 420,300 430,240 Q 440,180 450,160"
-              fill="rgba(255, 107, 0, 0.08)"
-              stroke="rgba(255, 107, 0, 0.2)"
-              strokeWidth="1"
-            />
-            {/* Asia */}
-            <path
-              d="M 540,60 Q 620,50 720,70 Q 780,100 800,150 Q 790,200 740,220 Q 680,230 620,210 Q 560,180 530,130 Q 520,90 540,60"
-              fill="rgba(255, 107, 0, 0.08)"
-              stroke="rgba(255, 107, 0, 0.2)"
-              strokeWidth="1"
-            />
-            {/* Australia */}
-            <path
-              d="M 720,300 Q 760,290 800,310 Q 820,340 800,370 Q 760,390 720,370 Q 700,340 720,300"
-              fill="rgba(255, 107, 0, 0.08)"
-              stroke="rgba(255, 107, 0, 0.2)"
-              strokeWidth="1"
-            />
-
-            {/* Connection lines between facilities */}
+            {/* Connection lines between facilities in same/adjacent regions */}
             {facilities.map((f1, i) =>
               facilities.slice(i + 1).map((f2) => {
-                const p1 = coordToSvg(f1.coordinates.lat, f1.coordinates.lng);
-                const p2 = coordToSvg(f2.coordinates.lat, f2.coordinates.lng);
                 const shouldShow = !selectedRegion || f1.region === selectedRegion || f2.region === selectedRegion;
                 return (
-                  <line
+                  <Line
                     key={`${f1.facility_id}-${f2.facility_id}`}
-                    x1={p1.x}
-                    y1={p1.y}
-                    x2={p2.x}
-                    y2={p2.y}
-                    stroke="rgba(255, 107, 0, 0.1)"
-                    strokeWidth="0.5"
-                    opacity={shouldShow ? 0.3 : 0.05}
-                    className="transition-opacity duration-300"
+                    from={[f1.coordinates.lng, f1.coordinates.lat]}
+                    to={[f2.coordinates.lng, f2.coordinates.lat]}
+                    stroke="rgba(255, 107, 0, 0.08)"
+                    strokeWidth={0.5}
+                    strokeLinecap="round"
+                    style={{ opacity: shouldShow ? 0.4 : 0.05 }}
                   />
                 );
               })
@@ -207,100 +174,89 @@ export function GlobalOverview({ onFacilitySelect }: GlobalOverviewProps) {
 
             {/* Facility markers */}
             {facilities.map((facility) => {
-              const { x, y } = coordToSvg(facility.coordinates.lat, facility.coordinates.lng);
               const isFiltered = selectedRegion && facility.region !== selectedRegion;
               const isHovered = hoveredFacility === facility.facility_id;
-              const statusColor =
-                facility.status === 'critical'
-                  ? '#ef4444'
-                  : facility.status === 'warning'
-                  ? '#f59e0b'
-                  : '#ff6b00';
+              const statusColor = getStatusColor(facility.status);
 
               return (
-                <g
+                <Marker
                   key={facility.facility_id}
-                  className="cursor-pointer transition-all duration-200"
-                  style={{ opacity: isFiltered ? 0.2 : 1 }}
-                  onMouseEnter={() => setHoveredFacility(facility.facility_id)}
-                  onMouseLeave={() => setHoveredFacility(null)}
-                  onClick={() => onFacilitySelect(facility)}
+                  coordinates={[facility.coordinates.lng, facility.coordinates.lat]}
                 >
-                  {/* Pulse ring for critical/warning */}
-                  {(facility.status === 'critical' || facility.status === 'warning') && (
+                  <g
+                    className="cursor-pointer"
+                    style={{ opacity: isFiltered ? 0.2 : 1, transition: 'opacity 0.3s' }}
+                    onMouseEnter={() => setHoveredFacility(facility.facility_id)}
+                    onMouseLeave={() => setHoveredFacility(null)}
+                    onClick={() => onFacilitySelect(facility)}
+                  >
+                    {/* Pulse ring for critical/warning */}
+                    {(facility.status === 'critical' || facility.status === 'warning') && (
+                      <circle r={15} fill="none" stroke={statusColor} strokeWidth="1" opacity={0.3}>
+                        <animate
+                          attributeName="r"
+                          from="6"
+                          to="20"
+                          dur={facility.status === 'critical' ? '1s' : '2s'}
+                          repeatCount="indefinite"
+                        />
+                        <animate
+                          attributeName="opacity"
+                          from="0.5"
+                          to="0"
+                          dur={facility.status === 'critical' ? '1s' : '2s'}
+                          repeatCount="indefinite"
+                        />
+                      </circle>
+                    )}
+
+                    {/* Glow */}
+                    <circle r={isHovered ? 14 : 10} fill={statusColor} opacity={0.2} />
+
+                    {/* Main dot */}
                     <circle
-                      cx={x}
-                      cy={y}
-                      r={isHovered ? 20 : 15}
-                      fill="none"
-                      stroke={statusColor}
+                      r={isHovered ? 7 : 5}
+                      fill={statusColor}
+                      stroke="rgba(0,0,0,0.5)"
                       strokeWidth="1"
-                      opacity={0.3}
-                    >
-                      <animate
-                        attributeName="r"
-                        from="8"
-                        to="25"
-                        dur={facility.status === 'critical' ? '1s' : '2s'}
-                        repeatCount="indefinite"
-                      />
-                      <animate
-                        attributeName="opacity"
-                        from="0.5"
-                        to="0"
-                        dur={facility.status === 'critical' ? '1s' : '2s'}
-                        repeatCount="indefinite"
-                      />
-                    </circle>
-                  )}
+                      style={{
+                        filter: `drop-shadow(0 0 ${isHovered ? 10 : 4}px ${statusColor})`,
+                        transition: 'r 0.2s',
+                      }}
+                    />
 
-                  {/* Glow effect */}
-                  <circle cx={x} cy={y} r={isHovered ? 16 : 12} fill={statusColor} opacity={0.2} />
-
-                  {/* Main marker */}
-                  <circle
-                    cx={x}
-                    cy={y}
-                    r={isHovered ? 8 : 6}
-                    fill={statusColor}
-                    stroke="rgba(0,0,0,0.5)"
-                    strokeWidth="1"
-                    style={{
-                      filter: `drop-shadow(0 0 ${isHovered ? 12 : 6}px ${statusColor})`,
-                    }}
-                  />
-
-                  {/* Label on hover */}
-                  {isHovered && (
-                    <g>
-                      <rect
-                        x={x + 12}
-                        y={y - 24}
-                        width={120}
-                        height={44}
-                        rx={4}
-                        fill="rgba(17, 17, 20, 0.95)"
-                        stroke={statusColor}
-                        strokeWidth="1"
-                      />
-                      <text x={x + 20} y={y - 8} fill="#fff" fontSize="11" fontFamily="Orbitron">
-                        {facility.facility_id}
-                      </text>
-                      <text x={x + 20} y={y + 6} fill="#71717a" fontSize="9" fontFamily="Inter">
-                        {facility.city}, {facility.country}
-                      </text>
-                      <text x={x + 20} y={y + 18} fill={statusColor} fontSize="9" fontFamily="JetBrains Mono">
-                        {facility.equipment_count} machines
-                      </text>
-                    </g>
-                  )}
-                </g>
+                    {/* Label on hover */}
+                    {isHovered && (
+                      <g>
+                        <rect
+                          x={10}
+                          y={-22}
+                          width={120}
+                          height={44}
+                          rx={4}
+                          fill="rgba(17, 17, 20, 0.95)"
+                          stroke={statusColor}
+                          strokeWidth="1"
+                        />
+                        <text x={18} y={-6} fill="#fff" fontSize="11" fontFamily="Orbitron">
+                          {facility.facility_id}
+                        </text>
+                        <text x={18} y={8} fill="#71717a" fontSize="9" fontFamily="Inter">
+                          {facility.city}, {facility.country}
+                        </text>
+                        <text x={18} y={20} fill={statusColor} fontSize="9" fontFamily="JetBrains Mono">
+                          {facility.equipment_count} machines
+                        </text>
+                      </g>
+                    )}
+                  </g>
+                </Marker>
               );
             })}
-          </svg>
+          </ComposableMap>
 
           {/* Legend */}
-          <div className="absolute bottom-6 left-6 flex gap-4 text-xs">
+          <div className="absolute bottom-4 left-6 flex gap-4 text-xs">
             <div className="flex items-center gap-2">
               <div className="w-3 h-3 rounded-full bg-ember" />
               <span className="text-slate">Online</span>

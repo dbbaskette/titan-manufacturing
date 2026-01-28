@@ -16,13 +16,21 @@ public class EquipmentState {
     private Instant patternStartTime = Instant.now();
     private final AtomicInteger cycleCount = new AtomicInteger(0);
 
-    // Sensor baselines (normal operating values)
-    private double vibrationBaseline = 2.0;
-    private double temperatureBaseline = 50.0;
-    private double rpmBaseline = 8500.0;
-    private double torqueBaseline = 45.0;
-    private double pressureBaseline = 6.0;
-    private double powerBaseline = 15.0;
+    // Original default baselines (never modified)
+    private static final double DEFAULT_VIBRATION = 2.0;
+    private static final double DEFAULT_TEMPERATURE = 50.0;
+    private static final double DEFAULT_RPM = 8500.0;
+    private static final double DEFAULT_TORQUE = 45.0;
+    private static final double DEFAULT_PRESSURE = 6.0;
+    private static final double DEFAULT_POWER = 15.0;
+
+    // Sensor baselines (normal operating values, may be adjusted)
+    private double vibrationBaseline = DEFAULT_VIBRATION;
+    private double temperatureBaseline = DEFAULT_TEMPERATURE;
+    private double rpmBaseline = DEFAULT_RPM;
+    private double torqueBaseline = DEFAULT_TORQUE;
+    private double pressureBaseline = DEFAULT_PRESSURE;
+    private double powerBaseline = DEFAULT_POWER;
 
     // Current values (modified by degradation)
     private double currentVibration;
@@ -48,13 +56,23 @@ public class EquipmentState {
         this.currentPower = powerBaseline;
     }
 
+    /** Reset baselines to factory defaults and current values to those defaults. */
+    public void resetToDefaults() {
+        this.vibrationBaseline = DEFAULT_VIBRATION;
+        this.temperatureBaseline = DEFAULT_TEMPERATURE;
+        this.rpmBaseline = DEFAULT_RPM;
+        this.torqueBaseline = DEFAULT_TORQUE;
+        this.pressureBaseline = DEFAULT_PRESSURE;
+        this.powerBaseline = DEFAULT_POWER;
+        resetToBaseline();
+    }
+
     public void setPattern(DegradationPattern pattern) {
         this.pattern = pattern;
         this.patternStartTime = Instant.now();
         this.cycleCount.set(0);
-        if (pattern == DegradationPattern.NORMAL) {
-            resetToBaseline();
-        }
+        // Always reset to baseline so degradation starts from known good values
+        resetToBaseline();
     }
 
     public int incrementCycle() {

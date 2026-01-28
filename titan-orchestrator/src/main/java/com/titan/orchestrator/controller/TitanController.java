@@ -4,11 +4,15 @@ import com.embabel.agent.api.invocation.AgentInvocation;
 import com.embabel.agent.core.AgentPlatform;
 import com.titan.orchestrator.agent.TitanSensorAgent.ChatQueryResponse;
 import com.titan.orchestrator.agent.TitanSensorAgent.HealthAnalysisReport;
+import com.titan.orchestrator.agent.TitanMaintenanceAgent.MaintenanceQueryResponse;
 import com.titan.orchestrator.model.SensorData.FacilityStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.web.client.RestTemplate;
 
 import java.util.Map;
 
@@ -24,9 +28,70 @@ public class TitanController {
     private static final Logger log = LoggerFactory.getLogger(TitanController.class);
 
     private final AgentPlatform agentPlatform;
+    private final RestTemplate restTemplate = new RestTemplate();
+
+    @Value("${titan.maintenance.url:http://localhost:8082}")
+    private String maintenanceUrl;
 
     public TitanController(AgentPlatform agentPlatform) {
         this.agentPlatform = agentPlatform;
+    }
+
+    // ── ML Pipeline Endpoints (proxy to maintenance-mcp-server) ─────────────
+
+    @GetMapping("/ml/model")
+    public ResponseEntity<String> getMlModel() {
+        return proxyGet("/ml/model");
+    }
+
+    @GetMapping("/ml/predictions")
+    public ResponseEntity<String> getMlPredictions() {
+        return proxyGet("/ml/predictions");
+    }
+
+    @GetMapping("/ml/gemfire/status")
+    public ResponseEntity<String> getMlGemFireStatus() {
+        return proxyGet("/ml/gemfire/status");
+    }
+
+    @GetMapping("/ml/pmml")
+    public ResponseEntity<String> getMlPmml() {
+        return proxyGet("/ml/pmml");
+    }
+
+    @PostMapping("/ml/retrain")
+    public ResponseEntity<String> mlRetrain() {
+        return proxyPost("/ml/retrain");
+    }
+
+    @PostMapping("/ml/deploy")
+    public ResponseEntity<String> mlDeploy() {
+        return proxyPost("/ml/deploy");
+    }
+
+    @PostMapping("/ml/predictions/reset")
+    public ResponseEntity<String> mlPredictionsReset() {
+        return proxyPost("/ml/predictions/reset");
+    }
+
+    private ResponseEntity<String> proxyGet(String path) {
+        try {
+            String body = restTemplate.getForObject(maintenanceUrl + path, String.class);
+            return ResponseEntity.ok().header("Content-Type", "application/json").body(body);
+        } catch (Exception e) {
+            log.error("ML proxy GET {} failed: {}", path, e.getMessage());
+            return ResponseEntity.internalServerError().body("{\"error\":\"" + e.getMessage() + "\"}");
+        }
+    }
+
+    private ResponseEntity<String> proxyPost(String path) {
+        try {
+            String body = restTemplate.postForObject(maintenanceUrl + path, null, String.class);
+            return ResponseEntity.ok().header("Content-Type", "application/json").body(body);
+        } catch (Exception e) {
+            log.error("ML proxy POST {} failed: {}", path, e.getMessage());
+            return ResponseEntity.internalServerError().body("{\"error\":\"" + e.getMessage() + "\"}");
+        }
     }
 
     /**
@@ -37,22 +102,28 @@ public class TitanController {
         log.info("Chat request: {}", request.message());
 
         try {
-            // Create invocation targeting ChatQueryResponse goal
-            var invocation = AgentInvocation.create(agentPlatform, ChatQueryResponse.class);
-            ChatQueryResponse result = invocation.invoke(request.message());
+            String msg = request.message().toLowerCase();
+            String response;
 
-            return ResponseEntity.ok(new ChatResponse(
-                true,
-                result.response(),
-                null
-            ));
+            // Route to the appropriate agent based on query content
+            if (msg.contains("failure") || msg.contains("predict") || msg.contains("maintenance")
+                    || msg.contains("rul") || msg.contains("remaining useful life")
+                    || msg.contains("work order") || msg.contains("schedule maintenance")) {
+                log.info("Routing to maintenance agent");
+                var invocation = AgentInvocation.create(agentPlatform, MaintenanceQueryResponse.class);
+                MaintenanceQueryResponse result = invocation.invoke(request.message());
+                response = result.response();
+            } else {
+                log.info("Routing to sensor agent");
+                var invocation = AgentInvocation.create(agentPlatform, ChatQueryResponse.class);
+                ChatQueryResponse result = invocation.invoke(request.message());
+                response = result.response();
+            }
+
+            return ResponseEntity.ok(new ChatResponse(true, response, null));
         } catch (Exception e) {
             log.error("Chat error: {}", e.getMessage(), e);
-            return ResponseEntity.ok(new ChatResponse(
-                false,
-                null,
-                e.getMessage()
-            ));
+            return ResponseEntity.ok(new ChatResponse(false, null, e.getMessage()));
         }
     }
 

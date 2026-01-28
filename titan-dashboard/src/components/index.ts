@@ -10,3 +10,5 @@ export { OrderTracker } from './OrderTracker';
 export { ChatInterface } from './ChatInterface';
 export { DemoScenarios } from './DemoScenarios';
 export { AgentStatus } from './AgentStatus';
+export { SimulationControl } from './SimulationControl';
+export { MLPipeline } from './MLPipeline';

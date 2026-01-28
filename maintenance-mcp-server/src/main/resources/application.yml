@@ -36,6 +36,18 @@ spring:
           resource: false
           prompt: false
 
+mqtt:
+  broker: ${MQTT_BROKER:tcp://localhost:1883}
+  client-id: maintenance-scorer
+  username: ${MQTT_USER:titan}
+  password: ${MQTT_PASS:titan5.0}
+  topic: titan/sensors/#
+
+gemfire:
+  locator:
+    host: ${GEMFIRE_LOCATOR_HOST:localhost}
+    port: ${GEMFIRE_LOCATOR_PORT:10334}
+
 management:
   endpoints:
     web:

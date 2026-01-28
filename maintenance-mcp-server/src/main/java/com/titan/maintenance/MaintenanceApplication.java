@@ -2,6 +2,7 @@ package com.titan.maintenance;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * Titan Maintenance MCP Server - Predictive maintenance agent for manufacturing equipment.
@@ -18,6 +19,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * - Recommends SKU-BRG-7420 bearing replacement
  */
 @SpringBootApplication
+@EnableScheduling
 public class MaintenanceApplication {
 
     public static void main(String[] args) {

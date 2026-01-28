@@ -13,7 +13,8 @@
   <img src="https://img.shields.io/badge/Spring%20Boot-3.4.1-brightgreen?logo=springboot" alt="Spring Boot">
   <img src="https://img.shields.io/badge/Spring%20AI-1.1.2-brightgreen" alt="Spring AI">
   <img src="https://img.shields.io/badge/Embabel-0.3.2-purple" alt="Embabel">
-  <img src="https://img.shields.io/badge/React-18-61DAFB?logo=react" alt="React">
+  <img src="https://img.shields.io/badge/React-19-61DAFB?logo=react" alt="React">
+  <img src="https://img.shields.io/badge/GemFire-PMML%20Scoring-00ADD8" alt="GemFire">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License">
 </p>
 
@@ -46,6 +47,20 @@ A **multi-agent AI platform** for manufacturing operations, demonstrating enterp
 
 ---
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/images/Titan-Global-Overview.jpeg" alt="Global Overview — 12 facilities worldwide" width="100%">
+  <br><em>Global Overview — real-time status of 12 smart factories across 4 regions</em>
+</p>
+
+<p align="center">
+  <img src="docs/images/Titan-Sensor-Monitor.jpeg" alt="Sensor Monitor — 6 real-time sensor charts with ML predictions" width="100%">
+  <br><em>Sensor Monitor — 6 live sensor charts with GemFire PMML failure predictions</em>
+</p>
+
+---
+
 ## Architecture
 
 ```mermaid
@@ -75,8 +90,9 @@ flowchart TB
     end
 
     subgraph Data["Data Layer"]
-        GP[(Greenplum<br/>pgvector + ML)]
+        GP[(Greenplum<br/>pgvector + MADlib ML)]
         RMQ[RabbitMQ<br/>MQTT Plugin]
+        GF[GemFire<br/>PMML Scoring]
         OM[OpenMetadata<br/>Catalog]
     end
 
@@ -101,6 +117,7 @@ flowchart TB
     RMQ -->|MQTT| SENS
     SENS --> GP
     MAINT --> GP
+    MAINT <--> GF
     INV --> GP
     LOG --> GP
     ORD --> GP
@@ -116,7 +133,7 @@ flowchart TB
 | Agent | Port | Role | MCP Tools |
 |-------|------|------|-----------|
 | **Sensor** | 8081 | IoT data from 600+ CNC machines | `list_equipment`, `get_sensor_readings`, `get_facility_status`, `detect_anomaly` |
-| **Maintenance** | 8082 | Predictive maintenance & RUL | `predict_failure`, `estimate_rul`, `schedule_maintenance`, `get_maintenance_history` |
+| **Maintenance** | 8082 | Predictive maintenance & RUL via GemFire PMML | `predict_failure`, `estimate_rul`, `schedule_maintenance`, `get_maintenance_history` |
 | **Inventory** | 8083 | 50K+ SKU management with pgvector | `check_stock`, `search_products`, `find_alternatives`, `calculate_reorder` |
 | **Logistics** | 8084 | Global shipping optimization | `get_carriers`, `create_shipment`, `track_shipment`, `estimate_shipping` |
 | **Order** | 8085 | B2B order fulfillment | `validate_order`, `check_contract_terms`, `initiate_fulfillment`, `get_order_status` |
@@ -184,6 +201,19 @@ docker compose --profile dashboard up -d
 # Access at http://localhost:3001
 ```
 
+### One-Liner: Start Everything
+
+```bash
+# Set your API key (or use Ollama - see step 3)
+export ANTHROPIC_API_KEY=your-key-here
+
+# Start all services at once
+docker compose --profile agents --profile generator --profile orchestrator --profile dashboard up -d
+
+# Watch the logs
+docker compose logs -f
+```
+
 ### 5. Verify Services
 
 ```bash
@@ -211,6 +241,7 @@ curl -X POST http://localhost:8080/api/chat \
 | Governance MCP Server | http://localhost:8087/mcp | - |
 | RabbitMQ Management | http://localhost:15672 | titan / titan5.0 |
 | Greenplum | localhost:15432 | gpadmin / VMware1! |
+| GemFire Pulse | http://localhost:7070 | (with `--profile gemfire`) |
 | OpenMetadata | http://localhost:8585 | (with `--profile governance`) |
 
 ---
@@ -284,6 +315,134 @@ curl -X POST http://localhost:8080/api/chat \
 
 ---
 
+## Demo Walkthrough: Predictive Maintenance
+
+This step-by-step guide demonstrates the full predictive maintenance flow with live sensor data.
+
+### Prerequisites
+
+Ensure all services are running:
+```bash
+docker compose --profile agents --profile generator --profile orchestrator --profile dashboard up -d
+docker compose ps  # Verify all containers are healthy
+```
+
+### Step 1: Open Dashboard Windows
+
+Open two browser tabs:
+1. **Simulation Control**: http://localhost:3001 → Navigate to "Simulation Control"
+2. **Sensor Monitor**: http://localhost:3001 → Navigate to "Sensor Monitor" → Select **PHX-CNC-001**
+
+### Step 2: Observe Normal Operation
+
+In Sensor Monitor, observe PHX-CNC-001 running normally:
+- Temperature: ~50°C (fluctuating ±1-2°C)
+- Vibration: ~2.0 mm/s (fluctuating slightly)
+- All readings in the "healthy" green zone
+
+### Step 3: Trigger Equipment Degradation
+
+**Option A: Via Simulation Control UI**
+1. Find PHX-CNC-001 in the equipment list
+2. Change the pattern dropdown from `NORMAL` to `BEARING_DEGRADATION`
+3. Click Apply
+
+**Option B: Via Phoenix Incident Button**
+```bash
+curl -X POST http://localhost:8090/api/generator/scenarios/phoenix-incident
+```
+
+**Option C: Via Direct API**
+```bash
+curl -X POST "http://localhost:8090/api/generator/equipment/PHX-CNC-001/pattern?pattern=BEARING_DEGRADATION"
+```
+
+### Step 4: Watch Degradation Progress (~2 minutes)
+
+In Sensor Monitor, watch the sensor values change over time:
+
+| Time | Vibration | Temperature | Status |
+|------|-----------|-------------|--------|
+| 0:00 | 2.0 mm/s | 50°C | Normal (reset to baseline) |
+| 0:30 | 2.6 mm/s | 55°C | Trending up |
+| 1:00 | 3.2 mm/s | 60°C | Approaching warning |
+| 1:30 | 3.8 mm/s | 64°C | **WARNING** threshold crossed |
+| 2:00 | 4.4 mm/s | 69°C | High risk |
+| 2:30 | 5.0 mm/s | 74°C | **CRITICAL** threshold crossed |
+
+### Step 5: Query Predictive Maintenance
+
+After 1-2 minutes of degraded data accumulating, ask the AI to analyze:
+
+**Via Chat Interface** (http://localhost:3001 → Chat):
+> "What is the failure probability for PHX-CNC-001?"
+
+**Via API**:
+```bash
+curl -X POST http://localhost:8080/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Predict failure probability for PHX-CNC-001 and recommend action"}'
+```
+
+### Step 6: Review AI Response
+
+The Maintenance Agent analyzes sensor trends and returns:
+
+```
+PHX-CNC-001 Analysis:
+- Failure Probability: 73%
+- Risk Level: HIGH
+- Hours to Failure: 48
+
+Risk Factors:
+- Vibration: 4.2 mm/s (WARNING) - trending up at 0.1 mm/s per cycle
+- Temperature: 65°C - correlated with vibration increase
+
+Recommendations:
+1. Schedule immediate maintenance inspection
+2. Check bearing condition - vibration pattern suggests bearing wear
+3. Recommend replacement: SKU-BRG-7420 (Spindle Bearing)
+4. Consider reducing equipment load until maintenance
+```
+
+### Step 7: Reset Equipment
+
+After the demo, reset to normal:
+
+```bash
+# Reset single equipment
+curl -X POST "http://localhost:8090/api/generator/equipment/PHX-CNC-001/reset"
+
+# Or reset all equipment
+curl -X POST http://localhost:8090/api/generator/reset-all
+```
+
+### Degradation Patterns Available
+
+| Pattern | Vibration | Temp | Power | RPM | Pressure | Torque | Time to Warning |
+|---------|-----------|------|-------|-----|----------|--------|-----------------|
+| `BEARING_DEGRADATION` | ↑↑ primary | ↑ follows vib | slight ↑ | ↓ slow | flat | ↑ drag | ~4 min |
+| `MOTOR_BURNOUT` | erratic spikes | ↑↑↑ rising | ↑↑ surge | ↓↓ dropping | flat | slight ↑ | ~5 min |
+| `SPINDLE_WEAR` | ↑ slow | slight ↑ | flat | ↓↓ primary | flat | erratic spikes | ~4 min |
+| `COOLANT_FAILURE` | slight ↑ | ↑↑ | flat | flat | ↓↓ primary | slight ↑ | ~6 min |
+| `ELECTRICAL_FAULT` | erratic ×3 | ↑ | ↑↑ surges | ↓↓ | slight ↓ | erratic ×3 | ~3 min |
+
+### Troubleshooting
+
+**Sensor Monitor shows "Disconnected"**
+- Verify sensor-mcp-server is running: `docker compose logs sensor-mcp-server --tail 10`
+- Check SSE endpoint: `curl http://localhost:8081/api/sensors/stream?equipmentId=PHX-CNC-001`
+
+**No prediction data**
+- Ensure sensor data has accumulated (wait 1-2 min after triggering degradation)
+- Check maintenance-mcp-server logs: `docker compose logs maintenance-mcp-server --tail 20`
+
+**Generator not responding**
+- Restart generator: `docker compose restart sensor-data-generator`
+- Check status: `curl http://localhost:8090/api/generator/status`
+
+---
+
 ## Project Structure
 
 ```
@@ -311,12 +470,14 @@ titan-manufacturing/
 ├── titan-dashboard/             # React UI (Port 3001)
 │   ├── src/components/
 │   │   ├── GlobalOverview.tsx   # World map with 12 facilities
-│   │   ├── SensorMonitor.tsx    # Real-time sensor charts
+│   │   ├── SensorMonitor.tsx    # Real-time 6-sensor charts + ML predictions
 │   │   ├── EquipmentHealth.tsx  # Predictive maintenance dashboard
 │   │   ├── OrderTracker.tsx     # Order fulfillment pipeline
 │   │   ├── ChatInterface.tsx    # Natural language AI chat
 │   │   ├── DemoScenarios.tsx    # Pre-built workflow demos
-│   │   └── AgentStatus.tsx      # MCP agent health monitor
+│   │   ├── AgentStatus.tsx      # MCP agent health monitor
+│   │   ├── SimulationControl.tsx # Equipment degradation pattern control
+│   │   └── MLPipeline.tsx       # ML pipeline visualization
 │   └── Dockerfile               # Multi-stage build with nginx
 │
 ├── config/
@@ -334,11 +495,12 @@ titan-manufacturing/
 
 | Layer | Technology | Purpose |
 |-------|------------|---------|
-| **Dashboard** | React 18 + Vite + Tailwind | Industrial control room UI |
+| **Dashboard** | React 19 + Vite 7 + Tailwind 4 | Industrial control room UI |
 | **Orchestration** | [Embabel Agent Framework](https://github.com/embabel/embabel-agent) | GOAP-based goal planning |
 | **MCP Protocol** | Spring AI MCP 1.1.2 | Tool registration and invocation |
 | **LLM Integration** | Spring AI | OpenAI, Anthropic, Ollama support |
-| **Database** | Greenplum 7 + pgvector | Analytics, vector embeddings, ML |
+| **Database** | Greenplum 7 + pgvector + MADlib | Analytics, vector embeddings, ML training |
+| **In-Memory Cache** | Apache Geode (GemFire) | Real-time PMML model scoring |
 | **Messaging** | RabbitMQ (MQTT plugin) | IoT sensor data ingestion |
 | **Data Catalog** | OpenMetadata 1.3 | Governance & lineage |
 | **Runtime** | Java 21 + Spring Boot 3.4 | Application framework |
@@ -383,6 +545,7 @@ cd titan-dashboard && npm run dev
 | `orchestrator` | Titan Orchestrator | Coordination layer |
 | `dashboard` | Titan Dashboard | UI |
 | `generator` | Sensor Data Generator | IoT simulation |
+| `gemfire` | GemFire (Apache Geode) | Real-time ML scoring cache |
 | `governance` | OpenMetadata stack | Data governance |
 | `observability` | Grafana, Prometheus | Monitoring |
 
@@ -413,12 +576,14 @@ docker compose --profile agents --profile orchestrator --profile generator up -d
 - **12 facilities** across NA, EU, APAC, LATAM regions
 - **600+ CNC machines** with real-time sensor monitoring
 - **50,000+ SKUs** with pgvector embeddings for semantic search
-- **Sensor types**: vibration (mm/s), temperature (C), RPM, torque (Nm), pressure (PSI)
+- **6 Sensor types**: vibration (mm/s), temperature (°C), power (kW), spindle speed (RPM), pressure (bar), torque (Nm)
 
 ### ML-Based Predictive Maintenance
 
-- Logistic regression model with stored coefficients
-- Feature engineering view for real-time prediction
+- MADlib logistic regression model with 12 coefficients (intercept + 11 features)
+- Features: all 6 normalized sensor values, vibration/temperature trend rates, days since maintenance, equipment age, anomaly count
+- Real-time scoring via GemFire PMML — scores 72 equipment per 30s cycle
+- Heuristic failure diagnosis identifies specific failure type (bearing, electrical, coolant, motor, spindle)
 - Run-to-failure data modeled after NASA C-MAPSS datasets
 - SQL functions: `predict_equipment_failure()`, `estimate_equipment_rul()`
 

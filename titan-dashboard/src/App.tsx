@@ -13,6 +13,8 @@ import {
   ChatInterface,
   DemoScenarios,
   AgentStatus,
+  SimulationControl,
+  MLPipeline,
 } from './components';
 import type { Facility } from './types';
 
@@ -44,6 +46,10 @@ function App() {
         return <DemoScenarios />;
       case 'agents':
         return <AgentStatus />;
+      case 'simulation':
+        return <SimulationControl />;
+      case 'ml-pipeline':
+        return <MLPipeline />;
       default:
         return <GlobalOverview onFacilitySelect={handleFacilitySelect} />;
     }

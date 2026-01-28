@@ -256,6 +256,118 @@ public class SensorService {
     }
 
     /**
+     * Get sensor thresholds for equipment.
+     */
+    @McpTool(description = "Get sensor thresholds for equipment. Returns equipment-specific overrides or global defaults from sensor_types table.")
+    public List<SensorThreshold> getThresholds(
+            @McpToolParam(description = "Equipment ID (optional). If not provided, returns all equipment-specific thresholds.")
+            String equipmentId
+    ) {
+        log.info("Getting thresholds: equipmentId={}", equipmentId);
+
+        if (equipmentId != null && !equipmentId.isBlank()) {
+            // Get equipment-specific thresholds with global fallback
+            return jdbcTemplate.query("""
+                SELECT
+                    st.threshold_id,
+                    COALESCE(st.equipment_id, 'GLOBAL') as equipment_id,
+                    st.sensor_type,
+                    COALESCE(st.warning_threshold, sty.warning_threshold) as warning_threshold,
+                    COALESCE(st.critical_threshold, sty.critical_threshold) as critical_threshold,
+                    st.updated_at,
+                    st.updated_by
+                FROM sensor_types sty
+                LEFT JOIN sensor_thresholds st ON sty.sensor_type = st.sensor_type
+                    AND (st.equipment_id = ? OR st.equipment_id IS NULL)
+                ORDER BY st.equipment_id NULLS LAST, sty.sensor_type
+                """,
+                (rs, rowNum) -> new SensorThreshold(
+                    rs.getObject("threshold_id") != null ? rs.getInt("threshold_id") : null,
+                    rs.getString("equipment_id"),
+                    rs.getString("sensor_type"),
+                    rs.getDouble("warning_threshold"),
+                    rs.getDouble("critical_threshold"),
+                    rs.getString("updated_at"),
+                    rs.getString("updated_by")
+                ),
+                equipmentId);
+        } else {
+            // Get all equipment-specific overrides
+            return jdbcTemplate.query("""
+                SELECT threshold_id, equipment_id, sensor_type,
+                       warning_threshold, critical_threshold, updated_at, updated_by
+                FROM sensor_thresholds
+                WHERE equipment_id IS NOT NULL
+                ORDER BY equipment_id, sensor_type
+                """,
+                (rs, rowNum) -> new SensorThreshold(
+                    rs.getInt("threshold_id"),
+                    rs.getString("equipment_id"),
+                    rs.getString("sensor_type"),
+                    rs.getDouble("warning_threshold"),
+                    rs.getDouble("critical_threshold"),
+                    rs.getString("updated_at"),
+                    rs.getString("updated_by")
+                ));
+        }
+    }
+
+    /**
+     * Update sensor threshold for equipment.
+     */
+    @McpTool(description = "Update or create a sensor threshold for specific equipment. Use this to customize anomaly detection sensitivity.")
+    public SensorThreshold updateThreshold(
+            @McpToolParam(description = "Equipment ID for the threshold")
+            String equipmentId,
+
+            @McpToolParam(description = "Sensor type (vibration, temperature, spindle_speed, etc.)")
+            String sensorType,
+
+            @McpToolParam(description = "Warning threshold value (triggers warning alert)")
+            Double warningThreshold,
+
+            @McpToolParam(description = "Critical threshold value (triggers critical alert)")
+            Double criticalThreshold,
+
+            @McpToolParam(description = "User making the update (for audit trail)")
+            String updatedBy
+    ) {
+        log.info("Updating threshold: equipment={}, sensor={}, warning={}, critical={}",
+                 equipmentId, sensorType, warningThreshold, criticalThreshold);
+
+        // Upsert the threshold
+        jdbcTemplate.update("""
+            INSERT INTO sensor_thresholds (equipment_id, sensor_type, warning_threshold, critical_threshold, updated_at, updated_by)
+            VALUES (?, ?, ?, ?, NOW(), ?)
+            ON CONFLICT (equipment_id, sensor_type)
+            DO UPDATE SET
+                warning_threshold = EXCLUDED.warning_threshold,
+                critical_threshold = EXCLUDED.critical_threshold,
+                updated_at = NOW(),
+                updated_by = EXCLUDED.updated_by
+            """,
+            equipmentId, sensorType.toLowerCase(), warningThreshold, criticalThreshold, updatedBy != null ? updatedBy : "system");
+
+        // Return the updated threshold
+        return jdbcTemplate.queryForObject("""
+            SELECT threshold_id, equipment_id, sensor_type,
+                   warning_threshold, critical_threshold, updated_at, updated_by
+            FROM sensor_thresholds
+            WHERE equipment_id = ? AND sensor_type = ?
+            """,
+            (rs, rowNum) -> new SensorThreshold(
+                rs.getInt("threshold_id"),
+                rs.getString("equipment_id"),
+                rs.getString("sensor_type"),
+                rs.getDouble("warning_threshold"),
+                rs.getDouble("critical_threshold"),
+                rs.getString("updated_at"),
+                rs.getString("updated_by")
+            ),
+            equipmentId, sensorType.toLowerCase());
+    }
+
+    /**
      * Detect anomalies in sensor readings for equipment.
      */
     @McpTool(description = "Check for anomalies in sensor readings. Returns active anomalies and performs basic threshold analysis.")
@@ -286,6 +398,137 @@ public class SensorService {
         }
 
         return anomalies;
+    }
+
+    /**
+     * ML-based anomaly detection using Greenplum's failure prediction model.
+     */
+    @McpTool(description = "Detect anomalies using machine learning model trained on historical failure data. Returns failure probability and contributing factors.")
+    public MLPrediction detectAnomalyML(
+            @McpToolParam(description = "Equipment ID to analyze (e.g., PHX-CNC-007)")
+            String equipmentId,
+
+            @McpToolParam(description = "Whether to create an anomaly record if probability exceeds threshold (default false)")
+            Boolean createAnomaly
+    ) {
+        log.info("ML anomaly detection: equipment={}, createAnomaly={}", equipmentId, createAnomaly);
+
+        try {
+            // Call the Greenplum ML function
+            Map<String, Object> result = jdbcTemplate.queryForMap("""
+                SELECT * FROM predict_equipment_failure(?)
+                """, equipmentId);
+
+            Double probability = result.get("failure_probability") != null
+                ? ((Number) result.get("failure_probability")).doubleValue() : 0.0;
+            String riskLevel = (String) result.get("risk_level");
+            Integer hoursToFailure = result.get("hours_to_failure") != null
+                ? ((Number) result.get("hours_to_failure")).intValue() : null;
+            Double confidence = result.get("confidence") != null
+                ? ((Number) result.get("confidence")).doubleValue() : 0.5;
+            Double vibrationContrib = result.get("vibration_contribution") != null
+                ? ((Number) result.get("vibration_contribution")).doubleValue() : 0.0;
+            Double temperatureContrib = result.get("temperature_contribution") != null
+                ? ((Number) result.get("temperature_contribution")).doubleValue() : 0.0;
+            Double trendContrib = result.get("trend_contribution") != null
+                ? ((Number) result.get("trend_contribution")).doubleValue() : 0.0;
+            String modelVersion = (String) result.get("model_version");
+
+            // Build summary
+            String summary = buildMLSummary(equipmentId, probability, riskLevel, hoursToFailure,
+                                           vibrationContrib, temperatureContrib, trendContrib);
+
+            // Optionally create anomaly record for high-risk predictions
+            if (Boolean.TRUE.equals(createAnomaly) && probability >= 0.5) {
+                createAnomalyFromPrediction(equipmentId, probability, riskLevel, hoursToFailure, summary);
+            }
+
+            return new MLPrediction(
+                equipmentId,
+                probability,
+                riskLevel,
+                hoursToFailure,
+                confidence,
+                vibrationContrib,
+                temperatureContrib,
+                trendContrib,
+                modelVersion,
+                summary
+            );
+        } catch (Exception e) {
+            log.error("ML prediction failed for {}: {}", equipmentId, e.getMessage());
+            return new MLPrediction(
+                equipmentId,
+                0.0,
+                "UNKNOWN",
+                null,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                "error",
+                "ML prediction unavailable: " + e.getMessage()
+            );
+        }
+    }
+
+    private String buildMLSummary(String equipmentId, Double probability, String riskLevel,
+                                  Integer hoursToFailure, Double vibrationContrib,
+                                  Double temperatureContrib, Double trendContrib) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format("ML Analysis for %s: %.1f%% failure probability (%s risk). ",
+                               equipmentId, probability * 100, riskLevel));
+
+        if (hoursToFailure != null && hoursToFailure < 720) {
+            int days = hoursToFailure / 24;
+            if (days > 0) {
+                sb.append(String.format("Estimated %d days to potential failure. ", days));
+            } else {
+                sb.append(String.format("Estimated %d hours to potential failure. ", hoursToFailure));
+            }
+        }
+
+        // Explain contributing factors
+        List<String> factors = new ArrayList<>();
+        if (vibrationContrib > 0.1) factors.add(String.format("vibration (+%.0f%%)", vibrationContrib * 100));
+        if (temperatureContrib > 0.1) factors.add(String.format("temperature (+%.0f%%)", temperatureContrib * 100));
+        if (trendContrib > 0.1) factors.add(String.format("trending metrics (+%.0f%%)", trendContrib * 100));
+
+        if (!factors.isEmpty()) {
+            sb.append("Key contributors: ").append(String.join(", ", factors)).append(".");
+        }
+
+        return sb.toString();
+    }
+
+    private void createAnomalyFromPrediction(String equipmentId, Double probability, String riskLevel,
+                                             Integer hoursToFailure, String description) {
+        try {
+            // Check if similar anomaly already exists
+            Integer existingCount = jdbcTemplate.queryForObject("""
+                SELECT COUNT(*) FROM anomalies
+                WHERE equipment_id = ?
+                  AND anomaly_type = 'ML_PREDICTION'
+                  AND resolved = false
+                  AND detected_at > NOW() - INTERVAL '24 hours'
+                """, Integer.class, equipmentId);
+
+            if (existingCount == null || existingCount == 0) {
+                jdbcTemplate.update("""
+                    INSERT INTO anomalies (equipment_id, anomaly_type, sensor_type, severity,
+                                          detected_at, description, predicted_failure_date, confidence_score)
+                    VALUES (?, 'ML_PREDICTION', 'multi-sensor', ?, NOW(), ?, NOW() + (? || ' hours')::interval, ?)
+                    """,
+                    equipmentId,
+                    riskLevel,
+                    description,
+                    hoursToFailure != null ? hoursToFailure.toString() : "720",
+                    probability);
+                log.info("Created ML-based anomaly record for {}", equipmentId);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to create anomaly record: {}", e.getMessage());
+        }
     }
 
     // Helper methods
@@ -338,13 +581,26 @@ public class SensorService {
     }
 
     private Anomaly analyzeReading(SensorReading reading) {
-        // Threshold-based anomaly detection
-        Double threshold = getThreshold(reading.sensorType());
-        if (threshold == null) return null;
+        // Get thresholds from database (equipment-specific or global)
+        Double[] thresholds = getThresholdsFromDb(reading.equipmentId(), reading.sensorType());
+        Double warningThreshold = thresholds[0];
+        Double criticalThreshold = thresholds[1];
 
-        if (reading.value() > threshold) {
+        if (criticalThreshold == null) return null;
+
+        String severity = null;
+        Double threshold = null;
+
+        if (reading.value() >= criticalThreshold) {
+            severity = "CRITICAL";
+            threshold = criticalThreshold;
+        } else if (warningThreshold != null && reading.value() >= warningThreshold) {
+            severity = "HIGH";
+            threshold = warningThreshold;
+        }
+
+        if (severity != null && threshold != null) {
             double deviation = ((reading.value() - threshold) / threshold) * 100;
-            String severity = deviation > 50 ? "CRITICAL" : deviation > 25 ? "HIGH" : "MEDIUM";
 
             return new Anomaly(
                 "RT-" + System.currentTimeMillis(),
@@ -353,25 +609,60 @@ public class SensorService {
                 reading.sensorType(),
                 severity,
                 reading.timestamp(),
-                String.format("%s reading of %.2f %s exceeds threshold of %.2f. %s",
-                    reading.sensorType(), reading.value(), reading.unit(), threshold,
-                    getRecommendation(reading.sensorType(), severity)),
+                String.format("%s reading of %.2f %s exceeds %s threshold of %.2f. %s",
+                    reading.sensorType(), reading.value(), reading.unit(),
+                    severity.equals("CRITICAL") ? "critical" : "warning",
+                    threshold, getRecommendation(reading.sensorType(), severity)),
                 null,  // predictedFailureDate
-                deviation / 100.0  // confidence based on deviation
+                Math.min(deviation / 100.0, 1.0)  // confidence based on deviation
             );
         }
 
         return null;
     }
 
-    private Double getThreshold(String sensorType) {
+    private Double[] getThresholdsFromDb(String equipmentId, String sensorType) {
+        try {
+            // First try equipment-specific threshold
+            List<Map<String, Object>> results = jdbcTemplate.queryForList("""
+                SELECT warning_threshold, critical_threshold
+                FROM sensor_thresholds
+                WHERE equipment_id = ? AND sensor_type = ?
+                """, equipmentId, sensorType.toLowerCase());
+
+            if (!results.isEmpty()) {
+                Map<String, Object> row = results.get(0);
+                return new Double[] {
+                    row.get("warning_threshold") != null ? ((Number) row.get("warning_threshold")).doubleValue() : null,
+                    row.get("critical_threshold") != null ? ((Number) row.get("critical_threshold")).doubleValue() : null
+                };
+            }
+
+            // Fall back to global defaults from sensor_types
+            results = jdbcTemplate.queryForList("""
+                SELECT warning_threshold, critical_threshold
+                FROM sensor_types
+                WHERE sensor_type = ?
+                """, sensorType.toLowerCase());
+
+            if (!results.isEmpty()) {
+                Map<String, Object> row = results.get(0);
+                return new Double[] {
+                    row.get("warning_threshold") != null ? ((Number) row.get("warning_threshold")).doubleValue() : null,
+                    row.get("critical_threshold") != null ? ((Number) row.get("critical_threshold")).doubleValue() : null
+                };
+            }
+        } catch (Exception e) {
+            log.warn("Error getting thresholds for {}/{}: {}", equipmentId, sensorType, e.getMessage());
+        }
+
+        // Hardcoded fallback if database unavailable
         return switch (sensorType.toLowerCase()) {
-            case "vibration" -> 4.0;  // mm/s
-            case "temperature" -> 85.0;  // Celsius
-            case "rpm" -> 12000.0;
-            case "torque" -> 500.0;  // Nm
-            case "pressure" -> 150.0;  // PSI
-            default -> null;
+            case "vibration" -> new Double[] { 3.5, 5.0 };
+            case "temperature" -> new Double[] { 70.0, 85.0 };
+            case "spindle_speed" -> new Double[] { 16000.0, 18000.0 };
+            case "power_draw" -> new Double[] { 65.0, 80.0 };
+            default -> new Double[] { null, null };
         };
     }
 

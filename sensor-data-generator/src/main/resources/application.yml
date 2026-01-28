@@ -15,8 +15,8 @@ mqtt:
 # Generator Configuration
 generator:
   enabled: true
-  equipment-count: ${EQUIPMENT_COUNT:30}
-  facilities: ${FACILITIES:PHX,MUC,SHA,DET,ATL}
+  equipment-count: ${EQUIPMENT_COUNT:72}
+  facilities: ${FACILITIES:PHX,MUC,SHA,DET,ATL,DAL,LYN,MAN,MEX,SEO,SYD,TYO}
   topic-prefix: titan/sensors
   interval-ms: ${INTERVAL_MS:5000}  # Generate readings every 5 seconds
 

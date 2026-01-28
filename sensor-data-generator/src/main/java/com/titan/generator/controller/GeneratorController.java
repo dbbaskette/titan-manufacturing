@@ -7,6 +7,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.CrossOrigin;
 
 import java.util.List;
 import java.util.Map;
@@ -22,6 +23,7 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/generator")
+@CrossOrigin(origins = "*")  // Allow dashboard to call this API
 public class GeneratorController {
 
     private static final Logger log = LoggerFactory.getLogger(GeneratorController.class);
@@ -62,15 +64,20 @@ public class GeneratorController {
     @GetMapping("/equipment")
     public List<Map<String, Object>> listEquipment() {
         return generator.getEquipmentStates().values().stream()
-            .map(state -> Map.<String, Object>of(
-                "equipmentId", state.getEquipmentId(),
-                "facilityId", state.getFacilityId(),
-                "pattern", state.getPattern().name(),
-                "cycles", state.getCycleCount(),
-                "vibration", state.getCurrentVibration(),
-                "temperature", state.getCurrentTemperature(),
-                "rpm", state.getCurrentRpm()
-            ))
+            .map(state -> {
+                Map<String, Object> m = new java.util.LinkedHashMap<>();
+                m.put("equipmentId", state.getEquipmentId());
+                m.put("facilityId", state.getFacilityId());
+                m.put("pattern", state.getPattern().name());
+                m.put("cycles", state.getCycleCount());
+                m.put("vibration", state.getCurrentVibration());
+                m.put("temperature", state.getCurrentTemperature());
+                m.put("rpm", state.getCurrentRpm());
+                m.put("power", state.getCurrentPower());
+                m.put("pressure", state.getCurrentPressure());
+                m.put("torque", state.getCurrentTorque());
+                return m;
+            })
             .toList();
     }
 
@@ -124,26 +131,32 @@ public class GeneratorController {
 
     /**
      * Trigger the Phoenix Incident scenario.
-     * Sets PHX-CNC-007 to bearing degradation if not already.
+     * Sets PHX-CNC-001 to bearing degradation to simulate the infamous Phoenix facility incident.
      */
     @PostMapping("/scenarios/phoenix-incident")
     public ResponseEntity<Map<String, Object>> triggerPhoenixIncident() {
         log.info("Triggering Phoenix Incident scenario");
 
-        EquipmentState state = generator.getEquipmentStates().get("PHX-CNC-007");
-        if (state == null) {
+        // Find the first Phoenix CNC machine
+        String targetEquipment = generator.getEquipmentStates().keySet().stream()
+            .filter(id -> id.startsWith("PHX-CNC"))
+            .sorted()
+            .findFirst()
+            .orElse(null);
+
+        if (targetEquipment == null) {
             return ResponseEntity.badRequest().body(Map.of(
-                "error", "PHX-CNC-007 not found in generator"
+                "error", "No Phoenix facility equipment found in generator"
             ));
         }
 
-        generator.setEquipmentPattern("PHX-CNC-007", DegradationPattern.BEARING_DEGRADATION);
+        generator.setEquipmentPattern(targetEquipment, DegradationPattern.BEARING_DEGRADATION);
 
         return ResponseEntity.ok(Map.of(
             "scenario", "Phoenix Incident",
-            "equipmentId", "PHX-CNC-007",
+            "equipmentId", targetEquipment,
             "pattern", DegradationPattern.BEARING_DEGRADATION.name(),
-            "description", "PHX-CNC-007 bearing degradation initiated. " +
+            "description", targetEquipment + " bearing degradation initiated. " +
                           "Vibration will increase from 2.5 to 5.0+ mm/s. " +
                           "ML model should predict ~73% failure probability within 48 hours."
         ));
@@ -164,6 +177,64 @@ public class GeneratorController {
             "equipmentId", equipmentId,
             "pattern", DegradationPattern.NORMAL.name(),
             "message", "Equipment reset to normal operation"
+        ));
+    }
+
+    /**
+     * Adjust sensor values for equipment.
+     * Accepts delta values to nudge vibration and/or temperature up or down.
+     */
+    @PostMapping("/equipment/{equipmentId}/adjust")
+    public ResponseEntity<Map<String, Object>> adjustSensors(
+            @PathVariable String equipmentId,
+            @RequestParam(required = false) Double vibration,
+            @RequestParam(required = false) Double temperature,
+            @RequestParam(required = false) Double rpm,
+            @RequestParam(required = false) Double power,
+            @RequestParam(required = false) Double pressure,
+            @RequestParam(required = false) Double torque) {
+
+        EquipmentState state = generator.getEquipmentStates().get(equipmentId);
+        if (state == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        if (vibration != null) {
+            double newVib = Math.max(0, state.getCurrentVibration() + vibration);
+            state.setCurrentVibration(newVib);
+            state.setVibrationBaseline(newVib);
+        }
+        if (temperature != null) {
+            double newTemp = Math.max(0, state.getCurrentTemperature() + temperature);
+            state.setCurrentTemperature(newTemp);
+            state.setTemperatureBaseline(newTemp);
+        }
+        if (rpm != null) {
+            double newRpm = Math.max(0, state.getCurrentRpm() + rpm);
+            state.setCurrentRpm(newRpm);
+            state.setRpmBaseline(newRpm);
+        }
+        if (power != null) {
+            double newPower = Math.max(0, state.getCurrentPower() + power);
+            state.setCurrentPower(newPower);
+            state.setPowerBaseline(newPower);
+        }
+        if (pressure != null) {
+            double newPressure = Math.max(0, state.getCurrentPressure() + pressure);
+            state.setCurrentPressure(newPressure);
+            state.setPressureBaseline(newPressure);
+        }
+        if (torque != null) {
+            double newTorque = Math.max(0, state.getCurrentTorque() + torque);
+            state.setCurrentTorque(newTorque);
+            state.setTorqueBaseline(newTorque);
+        }
+
+        return ResponseEntity.ok(Map.of(
+            "equipmentId", equipmentId,
+            "vibration", state.getCurrentVibration(),
+            "temperature", state.getCurrentTemperature(),
+            "message", "Sensor values adjusted"
         ));
     }
 

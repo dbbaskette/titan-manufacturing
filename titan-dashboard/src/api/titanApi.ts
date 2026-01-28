@@ -72,6 +72,115 @@ class TitanApi {
     const response = await fetch(`${API_BASE}/health`);
     return response.text();
   }
+
+  // ML Pipeline endpoints
+  async getMlModel(): Promise<MLModelData> {
+    return this.fetch<MLModelData>('/ml/model');
+  }
+
+  async getMlPredictions(): Promise<MLPredictionsData> {
+    return this.fetch<MLPredictionsData>('/ml/predictions');
+  }
+
+  async getMlGemFireStatus(): Promise<MLGemFireStatus> {
+    return this.fetch<MLGemFireStatus>('/ml/gemfire/status');
+  }
+
+  async getMlPmml(): Promise<MLPmmlData> {
+    return this.fetch<MLPmmlData>('/ml/pmml');
+  }
+
+  async retrainModel(): Promise<MLRetrainResult> {
+    return this.fetch<MLRetrainResult>('/ml/retrain', { method: 'POST' });
+  }
+
+  async deployModel(): Promise<MLDeployResult> {
+    return this.fetch<MLDeployResult>('/ml/deploy', { method: 'POST' });
+  }
+}
+
+// ML Pipeline types
+export interface MLCoefficient {
+  feature_name: string;
+  coefficient: number;
+  description: string;
+}
+
+export interface MLModelData {
+  modelId: string;
+  method: string;
+  coefficients: MLCoefficient[];
+  trainingObservations: number;
+  failureObservations: number;
+}
+
+export interface MLPrediction {
+  equipmentId: string;
+  failureProbability: number;
+  riskLevel: string;
+  probableCause?: string;
+  vibrationAvg: number;
+  temperatureAvg: number;
+  vibrationTrend: number;
+  temperatureTrend: number;
+  drivers?: Record<string, number>;
+  readingsInWindow: number;
+  modelId: string;
+  scoredAt: string;
+}
+
+export interface MLPredictionsData {
+  success: boolean;
+  totalEquipment: number;
+  criticalCount: number;
+  predictions: MLPrediction[];
+  scoringSource: string;
+  error?: string;
+}
+
+export interface MLGemFireStatus {
+  connected: boolean;
+  deployedModels: {
+    success?: boolean;
+    modelCount?: number;
+    models?: { modelId: string; pmmlSize: number; deployed: boolean }[];
+  };
+}
+
+export interface MLPmmlData {
+  success: boolean;
+  modelId: string;
+  format: string;
+  pmml: string;
+  featureCount: number;
+  error?: string;
+}
+
+export interface MLStep {
+  type: string;
+  message: string;
+  timestamp: string;
+}
+
+export interface MLRetrainResult {
+  success: boolean;
+  modelId?: string;
+  trainingObservations?: number;
+  coefficients?: Record<string, number>;
+  method?: string;
+  message?: string;
+  error?: string;
+  steps?: MLStep[];
+}
+
+export interface MLDeployResult {
+  success: boolean;
+  modelId?: string;
+  region?: string;
+  pmmlSize?: number;
+  message?: string;
+  error?: string;
+  steps?: MLStep[];
 }
 
 export const titanApi = new TitanApi();

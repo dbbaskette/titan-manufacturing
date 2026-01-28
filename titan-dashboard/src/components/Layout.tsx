@@ -2,7 +2,7 @@
 // TITAN MANUFACTURING 5.0 — Dashboard Layout
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Globe,
   Activity,
@@ -14,6 +14,8 @@ import {
   Menu,
   X,
   Cpu,
+  Zap,
+  Brain,
 } from 'lucide-react';
 
 interface LayoutProps {
@@ -29,7 +31,9 @@ const NAV_ITEMS = [
   { id: 'orders', label: 'Order Tracking', icon: Package },
   { id: 'chat', label: 'AI Assistant', icon: MessageSquare },
   { id: 'demos', label: 'Demo Scenarios', icon: Play },
+  { id: 'ml-pipeline', label: 'ML Pipeline', icon: Brain },
   { id: 'agents', label: 'Agent Status', icon: Cpu },
+  { id: 'simulation', label: 'Simulation Control', icon: Zap },
 ];
 
 export function Layout({ children, currentView, onViewChange }: LayoutProps) {
@@ -37,10 +41,10 @@ export function Layout({ children, currentView, onViewChange }: LayoutProps) {
   const [time, setTime] = useState(new Date());
 
   // Update time every second
-  useState(() => {
+  useEffect(() => {
     const interval = setInterval(() => setTime(new Date()), 1000);
     return () => clearInterval(interval);
-  });
+  }, []);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -116,7 +120,7 @@ export function Layout({ children, currentView, onViewChange }: LayoutProps) {
                   className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all ${
                     isActive
                       ? 'bg-ember/20 text-ember border border-ember/30'
-                      : 'text-slate hover:bg-steel hover:text-white border border-transparent'
+                      : 'text-zinc-300 hover:bg-steel hover:text-white border border-transparent'
                   }`}
                 >
                   <Icon size={18} className={isActive ? 'text-ember' : ''} />
