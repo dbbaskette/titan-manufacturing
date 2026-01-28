@@ -67,6 +67,11 @@ class TitanApi {
     return this.fetch<{ facilities: Facility[] }>('/facilities');
   }
 
+  // Generator equipment list
+  async getEquipmentList(): Promise<GeneratorEquipment[]> {
+    return this.fetch<GeneratorEquipment[]>('/generator/equipment');
+  }
+
   // Health check
   async healthCheck(): Promise<string> {
     const response = await fetch(`${API_BASE}/health`);
@@ -97,6 +102,20 @@ class TitanApi {
   async deployModel(): Promise<MLDeployResult> {
     return this.fetch<MLDeployResult>('/ml/deploy', { method: 'POST' });
   }
+}
+
+// Generator types
+export interface GeneratorEquipment {
+  equipmentId: string;
+  facilityId: string;
+  pattern: string;
+  cycles: number;
+  vibration: number;
+  temperature: number;
+  rpm: number;
+  power: number;
+  pressure: number;
+  torque: number;
 }
 
 // ML Pipeline types

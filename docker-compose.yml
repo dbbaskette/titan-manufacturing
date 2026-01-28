@@ -155,6 +155,7 @@ services:
       - MCP_SERVERS_COMMUNICATIONS=http://communications-mcp-server:8086
       - MCP_SERVERS_GOVERNANCE=http://governance-mcp-server:8087
       - MAINTENANCE_URL=http://maintenance-mcp-server:8082
+      - GENERATOR_URL=http://sensor-data-generator:8090
     depends_on:
       greenplum:
         condition: service_healthy

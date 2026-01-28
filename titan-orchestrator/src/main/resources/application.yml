@@ -59,6 +59,8 @@ spring:
 titan:
   maintenance:
     url: ${MAINTENANCE_URL:http://localhost:8082}
+  generator:
+    url: ${GENERATOR_URL:http://localhost:8090}
 
 # Embabel agent configuration
 embabel:

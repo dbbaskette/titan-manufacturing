@@ -33,6 +33,9 @@ public class TitanController {
     @Value("${titan.maintenance.url:http://localhost:8082}")
     private String maintenanceUrl;
 
+    @Value("${titan.generator.url:http://localhost:8090}")
+    private String generatorUrl;
+
     public TitanController(AgentPlatform agentPlatform) {
         this.agentPlatform = agentPlatform;
     }
@@ -90,6 +93,19 @@ public class TitanController {
             return ResponseEntity.ok().header("Content-Type", "application/json").body(body);
         } catch (Exception e) {
             log.error("ML proxy POST {} failed: {}", path, e.getMessage());
+            return ResponseEntity.internalServerError().body("{\"error\":\"" + e.getMessage() + "\"}");
+        }
+    }
+
+    // ── Generator Endpoints (proxy to sensor-data-generator) ───────────────
+
+    @GetMapping("/generator/equipment")
+    public ResponseEntity<String> getGeneratorEquipment() {
+        try {
+            String body = restTemplate.getForObject(generatorUrl + "/api/generator/equipment", String.class);
+            return ResponseEntity.ok().header("Content-Type", "application/json").body(body);
+        } catch (Exception e) {
+            log.error("Generator proxy GET /equipment failed: {}", e.getMessage());
             return ResponseEntity.internalServerError().body("{\"error\":\"" + e.getMessage() + "\"}");
         }
     }
