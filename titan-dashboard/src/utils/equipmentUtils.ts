@@ -12,6 +12,9 @@ export interface GeneratorEquipment {
   vibration: number;
   temperature: number;
   rpm: number;
+  power: number;
+  pressure: number;
+  torque: number;
 }
 
 const FACILITY_NAMES: Record<string, string> = {

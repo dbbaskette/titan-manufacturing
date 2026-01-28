@@ -381,6 +381,45 @@ export function SensorMonitor() {
     return { dotClass: 'bg-healthy' };
   }
 
+  // ── Fleet-wide statistics ─────────────────────────────────────────────
+  const fleetStats = useMemo(() => {
+    if (equipmentList.length === 0) return null;
+
+    const vibrations = equipmentList.map(e => e.vibration);
+    const temperatures = equipmentList.map(e => e.temperature);
+    const powers = equipmentList.map(e => e.power);
+    const rpms = equipmentList.map(e => e.rpm);
+
+    const avg = (arr: number[]) => arr.reduce((a, b) => a + b, 0) / arr.length;
+    const min = (arr: number[]) => Math.min(...arr);
+    const max = (arr: number[]) => Math.max(...arr);
+
+    // Count equipment exceeding thresholds
+    let vibWarning = 0, vibCritical = 0;
+    let tempWarning = 0, tempCritical = 0;
+    let powerWarning = 0, powerCritical = 0;
+
+    for (const eq of equipmentList) {
+      const vl = getThresholdLevel('vibration', eq.vibration);
+      const tl = getThresholdLevel('temperature', eq.temperature);
+      const pl = getThresholdLevel('power', eq.power);
+      if (vl === 'critical') vibCritical++;
+      else if (vl === 'warning') vibWarning++;
+      if (tl === 'critical') tempCritical++;
+      else if (tl === 'warning') tempWarning++;
+      if (pl === 'critical') powerCritical++;
+      else if (pl === 'warning') powerWarning++;
+    }
+
+    return {
+      total: equipmentList.length,
+      vibration: { avg: avg(vibrations), min: min(vibrations), max: max(vibrations), warning: vibWarning, critical: vibCritical },
+      temperature: { avg: avg(temperatures), min: min(temperatures), max: max(temperatures), warning: tempWarning, critical: tempCritical },
+      power: { avg: avg(powers), min: min(powers), max: max(powers), warning: powerWarning, critical: powerCritical },
+      rpm: { avg: avg(rpms), min: min(rpms), max: max(rpms) },
+    };
+  }, [equipmentList]);
+
   return (
     <div className="space-y-6 fade-in">
       {/* Header */}
@@ -415,6 +454,112 @@ export function SensorMonitor() {
           </button>
         </div>
       </div>
+
+      {/* Fleet-Wide Summary */}
+      {fleetStats && (
+        <div className="panel">
+          <div className="panel-header">
+            <Activity size={16} />
+            Fleet-Wide Sensor Summary
+            <span className="ml-auto text-xs font-normal text-slate">{fleetStats.total} equipment monitored</span>
+          </div>
+          <div className="grid grid-cols-4 gap-4 p-4">
+            {/* Vibration Summary */}
+            <div className="bg-steel rounded-lg p-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs text-slate uppercase tracking-wider">Vibration</span>
+                {(fleetStats.vibration.critical > 0 || fleetStats.vibration.warning > 0) && (
+                  <div className="flex items-center gap-1">
+                    {fleetStats.vibration.critical > 0 && (
+                      <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-critical/20 text-critical">
+                        {fleetStats.vibration.critical} CRIT
+                      </span>
+                    )}
+                    {fleetStats.vibration.warning > 0 && (
+                      <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-warning/20 text-warning">
+                        {fleetStats.vibration.warning} WARN
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+              <p className="font-display text-xl font-bold text-white">
+                {fleetStats.vibration.avg.toFixed(2)} <span className="text-xs text-slate font-normal">mm/s avg</span>
+              </p>
+              <p className="text-xs text-ash mt-1">
+                Range: {fleetStats.vibration.min.toFixed(1)} – {fleetStats.vibration.max.toFixed(1)} mm/s
+              </p>
+            </div>
+
+            {/* Temperature Summary */}
+            <div className="bg-steel rounded-lg p-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs text-slate uppercase tracking-wider">Temperature</span>
+                {(fleetStats.temperature.critical > 0 || fleetStats.temperature.warning > 0) && (
+                  <div className="flex items-center gap-1">
+                    {fleetStats.temperature.critical > 0 && (
+                      <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-critical/20 text-critical">
+                        {fleetStats.temperature.critical} CRIT
+                      </span>
+                    )}
+                    {fleetStats.temperature.warning > 0 && (
+                      <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-warning/20 text-warning">
+                        {fleetStats.temperature.warning} WARN
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+              <p className="font-display text-xl font-bold text-white">
+                {fleetStats.temperature.avg.toFixed(1)} <span className="text-xs text-slate font-normal">°C avg</span>
+              </p>
+              <p className="text-xs text-ash mt-1">
+                Range: {fleetStats.temperature.min.toFixed(0)} – {fleetStats.temperature.max.toFixed(0)}°C
+              </p>
+            </div>
+
+            {/* Power Summary */}
+            <div className="bg-steel rounded-lg p-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs text-slate uppercase tracking-wider">Power Draw</span>
+                {(fleetStats.power.critical > 0 || fleetStats.power.warning > 0) && (
+                  <div className="flex items-center gap-1">
+                    {fleetStats.power.critical > 0 && (
+                      <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-critical/20 text-critical">
+                        {fleetStats.power.critical} CRIT
+                      </span>
+                    )}
+                    {fleetStats.power.warning > 0 && (
+                      <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-warning/20 text-warning">
+                        {fleetStats.power.warning} WARN
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+              <p className="font-display text-xl font-bold text-white">
+                {fleetStats.power.avg.toFixed(1)} <span className="text-xs text-slate font-normal">kW avg</span>
+              </p>
+              <p className="text-xs text-ash mt-1">
+                Range: {fleetStats.power.min.toFixed(0)} – {fleetStats.power.max.toFixed(0)} kW
+              </p>
+            </div>
+
+            {/* RPM Summary */}
+            <div className="bg-steel rounded-lg p-3">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs text-slate uppercase tracking-wider">Spindle Speed</span>
+              </div>
+              <p className="font-display text-xl font-bold text-white">
+                {(fleetStats.rpm.avg / 1000).toFixed(1)} <span className="text-xs text-slate font-normal">K RPM avg</span>
+              </p>
+              <p className="text-xs text-ash mt-1">
+                Range: {(fleetStats.rpm.min / 1000).toFixed(1)} – {(fleetStats.rpm.max / 1000).toFixed(1)}K RPM
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Equipment Selector — Facility-Grouped Accordion */}
       <div className="panel">

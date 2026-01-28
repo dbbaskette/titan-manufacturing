@@ -2,8 +2,8 @@
 // TITAN MANUFACTURING 5.0 — Equipment Health Dashboard
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useState, useEffect, useCallback } from 'react';
-import { Wrench, AlertTriangle, TrendingDown, CheckCircle, Search, Activity } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Wrench, AlertTriangle, TrendingDown, CheckCircle, Search, Activity, Zap } from 'lucide-react';
 import { titanApi } from '../api/titanApi';
 import type { GeneratorEquipment, MLPrediction } from '../api/titanApi';
 
@@ -13,6 +13,29 @@ const FACILITY_NAMES: Record<string, string> = {
   MUC: 'Munich', LYN: 'Lyon', MAN: 'Manchester', SHA: 'Shanghai',
   TYO: 'Tokyo', SEO: 'Seoul', SYD: 'Sydney', MEX: 'Mexico City',
 };
+
+// Threshold constants (same as SensorMonitor)
+const THRESHOLDS = {
+  vibration: { warning: 3.0, critical: 3.5 },
+  temperature: { warning: 70, critical: 85 },
+  power: { warning: 50, critical: 55 },
+} as const;
+
+interface ThresholdCounts {
+  warnings: number;
+  criticals: number;
+  currentSensors: { vibration: 'normal' | 'warning' | 'critical'; temperature: 'normal' | 'warning' | 'critical'; power: 'normal' | 'warning' | 'critical' };
+}
+
+function checkThresholds(eq: GeneratorEquipment): ThresholdCounts['currentSensors'] {
+  const vibLevel = eq.vibration >= THRESHOLDS.vibration.critical ? 'critical' as const
+    : eq.vibration >= THRESHOLDS.vibration.warning ? 'warning' as const : 'normal' as const;
+  const tempLevel = eq.temperature >= THRESHOLDS.temperature.critical ? 'critical' as const
+    : eq.temperature >= THRESHOLDS.temperature.warning ? 'warning' as const : 'normal' as const;
+  const powerLevel = eq.power >= THRESHOLDS.power.critical ? 'critical' as const
+    : eq.power >= THRESHOLDS.power.warning ? 'warning' as const : 'normal' as const;
+  return { vibration: vibLevel, temperature: tempLevel, power: powerLevel };
+}
 
 // Equipment type from ID prefix pattern (e.g. PHX-CNC-001 → CNC)
 function deriveEquipmentType(id: string): string {
@@ -29,6 +52,181 @@ function deriveEquipmentType(id: string): string {
   return 'Unknown';
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Pattern-Specific RUL Estimation
+// Based on degradation physics and sensor severity
+// ═══════════════════════════════════════════════════════════════════════════
+
+interface RULEstimate {
+  hours: number;
+  confidence: 'high' | 'medium' | 'low';
+  basis: string;
+}
+
+type SensorType = 'vibration' | 'temperature' | 'power' | 'pressure' | 'torque';
+
+interface DegradationProfile {
+  baseHoursAtCritical: number;  // Hours remaining when sensors hit critical
+  primarySensor: SensorType;
+  secondarySensor?: SensorType;
+  degradationRate: number;  // Multiplier for how fast this pattern progresses
+  description: string;
+}
+
+// Pattern-specific degradation profiles
+const DEGRADATION_PROFILES: Record<string, DegradationProfile> = {
+  'Bearing Degradation': {
+    baseHoursAtCritical: 48,
+    primarySensor: 'vibration',
+    secondarySensor: 'torque',
+    degradationRate: 1.0,  // Gradual, predictable
+    description: 'Mechanical wear — gradual progression',
+  },
+  'Motor burnout': {
+    baseHoursAtCritical: 12,
+    primarySensor: 'temperature',
+    secondarySensor: 'power',
+    degradationRate: 2.5,  // Can accelerate rapidly
+    description: 'Thermal runaway — accelerating failure',
+  },
+  'Electrical Fault': {
+    baseHoursAtCritical: 8,
+    primarySensor: 'power',
+    degradationRate: 3.0,  // Unpredictable, can fail suddenly
+    description: 'Electrical instability — unpredictable',
+  },
+  'Coolant System Failure': {
+    baseHoursAtCritical: 24,
+    primarySensor: 'temperature',
+    secondarySensor: 'pressure',
+    degradationRate: 1.5,
+    description: 'Thermal stress — pressure-dependent',
+  },
+  'Spindle Wear': {
+    baseHoursAtCritical: 72,
+    primarySensor: 'vibration',
+    secondarySensor: 'torque',
+    degradationRate: 0.8,  // Slow, mechanical wear
+    description: 'Mechanical friction — slow progression',
+  },
+};
+
+// Sensor severity thresholds for RUL calculation
+const SENSOR_SEVERITY = {
+  vibration: { normal: 2.5, warning: 3.5, critical: 5.0, max: 10.0 },
+  temperature: { normal: 55, warning: 70, critical: 85, max: 150 },
+  power: { normal: 30, warning: 45, critical: 55, max: 100 },
+  pressure: { normal: 6.0, warning: 4.5, critical: 3.0, max: 10.0, inverted: true },
+  torque: { normal: 55, warning: 65, critical: 75, max: 100 },
+};
+
+function calculateSensorSeverity(
+  sensor: SensorType,
+  value: number
+): number {
+  const s = SENSOR_SEVERITY[sensor];
+  const inverted = 'inverted' in s && s.inverted;
+
+  if (inverted) {
+    // For pressure: lower is worse
+    if (value >= s.normal) return 0;
+    if (value >= s.warning) return 0.3 + 0.3 * (s.normal - value) / (s.normal - s.warning);
+    if (value >= s.critical) return 0.6 + 0.3 * (s.warning - value) / (s.warning - s.critical);
+    return 0.9 + 0.1 * Math.min(1, (s.critical - value) / s.critical);
+  }
+
+  // Normal case: higher is worse
+  if (value <= s.normal) return 0;
+  if (value <= s.warning) return 0.3 * (value - s.normal) / (s.warning - s.normal);
+  if (value <= s.critical) return 0.3 + 0.4 * (value - s.warning) / (s.critical - s.warning);
+  return 0.7 + 0.3 * Math.min(1, (value - s.critical) / (s.max - s.critical));
+}
+
+function estimateRUL(
+  probableCause: string | undefined,
+  failureProbability: number,
+  sensors: { vibration: number; temperature: number; power: number; pressure: number; torque: number }
+): RULEstimate {
+  // Default fallback for unknown patterns
+  const defaultProfile: DegradationProfile = {
+    baseHoursAtCritical: 24,
+    primarySensor: 'vibration',
+    degradationRate: 1.5,
+    description: 'Unknown pattern — conservative estimate',
+  };
+
+  // Find matching profile (partial match on cause string)
+  let profile: DegradationProfile = defaultProfile;
+  let matchedPattern = 'Unknown';
+  if (probableCause) {
+    for (const [pattern, p] of Object.entries(DEGRADATION_PROFILES)) {
+      if (probableCause.toLowerCase().includes(pattern.toLowerCase().split(' ')[0])) {
+        profile = p;
+        matchedPattern = pattern;
+        break;
+      }
+    }
+  }
+
+  // Calculate primary sensor severity (0-1)
+  const primarySeverity = calculateSensorSeverity(profile.primarySensor, sensors[profile.primarySensor]);
+
+  // Calculate secondary sensor severity if applicable
+  let secondarySeverity = 0;
+  if (profile.secondarySensor) {
+    secondarySeverity = calculateSensorSeverity(profile.secondarySensor, sensors[profile.secondarySensor]);
+  }
+
+  // Combined severity (weighted toward primary)
+  const combinedSeverity = primarySeverity * 0.7 + secondarySeverity * 0.3;
+
+  // Base RUL from failure probability (inverse relationship)
+  // At 0% probability: ~2000 hours, at 100%: ~0 hours
+  const probabilityFactor = 1 - failureProbability / 100;
+
+  // Calculate RUL based on pattern and severity
+  let hours: number;
+  if (failureProbability >= 90) {
+    // Critical: use pattern-specific base hours, scaled by remaining probability
+    hours = profile.baseHoursAtCritical * probabilityFactor * 10;
+  } else if (failureProbability >= 70) {
+    // High risk: 1-7 days
+    hours = profile.baseHoursAtCritical * 3 * probabilityFactor;
+  } else if (failureProbability >= 40) {
+    // Moderate risk: 1-4 weeks
+    hours = 168 + (672 - 168) * probabilityFactor; // 168h = 1 week, 672h = 4 weeks
+  } else if (failureProbability >= 20) {
+    // Low-moderate risk: 1-3 months
+    hours = 720 + (2160 - 720) * probabilityFactor; // 720h = 1 month, 2160h = 3 months
+  } else {
+    // Low risk: 3-12 months
+    hours = 2160 + (8760 - 2160) * probabilityFactor;
+  }
+
+  // Apply degradation rate (faster patterns = shorter RUL)
+  hours = hours / profile.degradationRate;
+
+  // Apply sensor severity adjustment (high severity = shorter RUL)
+  hours = hours * (1 - combinedSeverity * 0.5);
+
+  // Ensure minimum of 1 hour
+  hours = Math.max(1, Math.round(hours));
+
+  // Determine confidence based on data quality
+  let confidence: 'high' | 'medium' | 'low' = 'medium';
+  if (matchedPattern !== 'Unknown' && failureProbability > 50) {
+    confidence = 'high';
+  } else if (matchedPattern === 'Unknown' || failureProbability < 20) {
+    confidence = 'low';
+  }
+
+  return {
+    hours,
+    confidence,
+    basis: profile.description,
+  };
+}
+
 type EquipmentStatus = 'healthy' | 'degraded' | 'critical' | 'maintenance';
 
 interface EquipmentItem {
@@ -41,6 +239,8 @@ interface EquipmentItem {
   healthScore: number;
   failureProbability: number;
   remainingLife: number;
+  rulConfidence: 'high' | 'medium' | 'low';
+  rulBasis: string;
   pattern: string;
   // ML prediction data (if available)
   probableCause?: string;
@@ -54,26 +254,47 @@ interface EquipmentItem {
   power: number;
   pressure: number;
   torque: number;
+  // Threshold tracking
+  thresholdWarnings: number;
+  thresholdCriticals: number;
+  currentThresholds: ThresholdCounts['currentSensors'];
 }
 
-function deriveStatus(riskLevel?: string, failureProbability?: number): EquipmentStatus {
-  if (!riskLevel) {
-    // No ML prediction — use failure probability threshold
+function deriveStatus(
+  riskLevel?: string,
+  failureProbability?: number,
+  thresholds?: ThresholdCounts['currentSensors'],
+): EquipmentStatus {
+  // Start with ML-based status
+  let mlStatus: EquipmentStatus = 'healthy';
+  if (riskLevel) {
+    switch (riskLevel) {
+      case 'CRITICAL': case 'HIGH': mlStatus = 'critical'; break;
+      case 'MEDIUM': mlStatus = 'degraded'; break;
+    }
+  } else {
     const fp = failureProbability ?? 0;
-    if (fp > 50) return 'critical';
-    if (fp > 20) return 'degraded';
-    return 'healthy';
+    if (fp > 50) mlStatus = 'critical';
+    else if (fp > 20) mlStatus = 'degraded';
   }
-  switch (riskLevel) {
-    case 'CRITICAL': case 'HIGH': return 'critical';
-    case 'MEDIUM': return 'degraded';
-    default: return 'healthy';
+
+  // Also check live threshold breaches
+  let thresholdStatus: EquipmentStatus = 'healthy';
+  if (thresholds) {
+    const levels = Object.values(thresholds);
+    if (levels.includes('critical')) thresholdStatus = 'critical';
+    else if (levels.includes('warning')) thresholdStatus = 'degraded';
   }
+
+  // Return the worse of the two
+  const order: Record<EquipmentStatus, number> = { healthy: 0, maintenance: 1, degraded: 2, critical: 3 };
+  return order[mlStatus] >= order[thresholdStatus] ? mlStatus : thresholdStatus;
 }
 
 function mergeEquipmentData(
   equipment: GeneratorEquipment[],
   predictions: MLPrediction[],
+  alertCounts: Record<string, { warnings: number; criticals: number }>,
 ): EquipmentItem[] {
   const predMap = new Map<string, MLPrediction>();
   for (const p of predictions) {
@@ -83,15 +304,17 @@ function mergeEquipmentData(
   return equipment.map((eq) => {
     const pred = predMap.get(eq.equipmentId);
     const fp = pred ? pred.failureProbability * 100 : 0;
+    const counts = alertCounts[eq.equipmentId] || { warnings: 0, criticals: 0 };
+    const currentThresholds = checkThresholds(eq);
     const healthScore = Math.round(Math.max(0, Math.min(100, 100 - fp)));
-    const status = deriveStatus(pred?.riskLevel, fp);
+    const status = deriveStatus(pred?.riskLevel, fp, currentThresholds);
 
-    // Estimate remaining useful life from failure probability
-    let remainingLife: number;
-    if (fp > 80) remainingLife = Math.round(24 * (1 - fp / 100));
-    else if (fp > 50) remainingLife = Math.round(72 * (1 - fp / 100));
-    else if (fp > 20) remainingLife = Math.round(720 * (1 - fp / 100));
-    else remainingLife = Math.round(2400 * (1 - fp / 100));
+    // Pattern-specific RUL estimation
+    const rulEstimate = estimateRUL(
+      pred?.probableCause,
+      fp,
+      { vibration: eq.vibration, temperature: eq.temperature, power: eq.power, pressure: eq.pressure, torque: eq.torque }
+    );
 
     return {
       id: eq.equipmentId,
@@ -102,7 +325,9 @@ function mergeEquipmentData(
       status,
       healthScore,
       failureProbability: Math.round(fp * 10) / 10,
-      remainingLife,
+      remainingLife: rulEstimate.hours,
+      rulConfidence: rulEstimate.confidence,
+      rulBasis: rulEstimate.basis,
       pattern: eq.pattern,
       probableCause: pred?.probableCause,
       riskLevel: pred?.riskLevel,
@@ -114,6 +339,9 @@ function mergeEquipmentData(
       power: eq.power,
       pressure: eq.pressure,
       torque: eq.torque,
+      thresholdWarnings: counts.warnings,
+      thresholdCriticals: counts.criticals,
+      currentThresholds,
     };
   });
 }
@@ -163,6 +391,7 @@ export function EquipmentHealth() {
   const [selectedEquipment, setSelectedEquipment] = useState<EquipmentItem | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterFacility, setFilterFacility] = useState<string>('all');
+  const alertCountsRef = useRef<Record<string, { warnings: number; criticals: number }>>({});
 
   const fetchData = useCallback(async () => {
     try {
@@ -170,7 +399,21 @@ export function EquipmentHealth() {
         titanApi.getEquipmentList(),
         titanApi.getMlPredictions(),
       ]);
-      const merged = mergeEquipmentData(eqList, predData.predictions || []);
+
+      // Accumulate threshold alerts
+      for (const eq of eqList) {
+        const levels = checkThresholds(eq);
+        if (!alertCountsRef.current[eq.equipmentId]) {
+          alertCountsRef.current[eq.equipmentId] = { warnings: 0, criticals: 0 };
+        }
+        const counts = alertCountsRef.current[eq.equipmentId];
+        for (const level of Object.values(levels)) {
+          if (level === 'critical') counts.criticals++;
+          else if (level === 'warning') counts.warnings++;
+        }
+      }
+
+      const merged = mergeEquipmentData(eqList, predData.predictions || [], alertCountsRef.current);
       setEquipment(merged);
 
       // Update selected equipment with fresh data
@@ -259,7 +502,10 @@ export function EquipmentHealth() {
             active={filterStatus === 'critical'} />
         </div>
         <div className="stagger scale-in stagger-4">
-          <StatusCard label="In Maintenance" count={statusCounts.maintenance} icon={Wrench} color="info"
+          <StatusCard label="Threshold Alerts" count={equipment.filter(e => {
+            const t = e.currentThresholds;
+            return t.vibration !== 'normal' || t.temperature !== 'normal' || t.power !== 'normal';
+          }).length} icon={Zap} color="info"
             onClick={() => setFilterStatus(filterStatus === 'maintenance' ? 'all' : 'maintenance')}
             active={filterStatus === 'maintenance'} />
         </div>
@@ -316,7 +562,23 @@ export function EquipmentHealth() {
                 </div>
                 <p className="text-xs text-zinc-300">{eq.name}</p>
                 <div className="flex items-center justify-between mt-2">
-                  <span className="text-xs text-ash">{eq.facility}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-ash">{eq.facility}</span>
+                    {(eq.thresholdWarnings > 0 || eq.thresholdCriticals > 0) && (
+                      <div className="flex items-center gap-1">
+                        {eq.thresholdCriticals > 0 && (
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-critical/20 text-critical">
+                            {eq.thresholdCriticals}C
+                          </span>
+                        )}
+                        {eq.thresholdWarnings > 0 && (
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-warning/20 text-warning">
+                            {eq.thresholdWarnings}W
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
                   <HealthGauge value={eq.healthScore} size="small" />
                 </div>
               </div>
@@ -345,11 +607,6 @@ export function EquipmentHealth() {
                     <p className="text-sm text-ash mt-1">
                       {selectedEquipment.type} • {selectedEquipment.facility} Plant
                     </p>
-                    {selectedEquipment.pattern !== 'NORMAL' && (
-                      <p className="text-xs text-warning mt-1 font-mono">
-                        Pattern: {selectedEquipment.pattern.replace(/_/g, ' ')}
-                      </p>
-                    )}
                   </div>
                   <HealthGauge value={selectedEquipment.healthScore} size="large" />
                 </div>
@@ -364,7 +621,17 @@ export function EquipmentHealth() {
                         <p className="text-sm text-zinc-300">
                           {selectedEquipment.failureProbability}% failure probability
                           {selectedEquipment.probableCause && ` — ${selectedEquipment.probableCause}`}.
-                          {' '}Estimated {formatHours(selectedEquipment.remainingLife)} until failure.
+                        </p>
+                        <p className="text-sm text-zinc-400 mt-1">
+                          <span className="text-critical font-mono">{formatHours(selectedEquipment.remainingLife)}</span> estimated until failure
+                          <span className="text-ash"> • {selectedEquipment.rulBasis}</span>
+                          <span className={`ml-2 px-1.5 py-0.5 rounded text-[9px] font-mono uppercase ${
+                            selectedEquipment.rulConfidence === 'high' ? 'bg-healthy/20 text-healthy'
+                            : selectedEquipment.rulConfidence === 'medium' ? 'bg-warning/20 text-warning'
+                            : 'bg-slate/20 text-slate'
+                          }`}>
+                            {selectedEquipment.rulConfidence} confidence
+                          </span>
                         </p>
                       </div>
                     </div>
@@ -384,15 +651,10 @@ export function EquipmentHealth() {
                     : 'healthy'
                   }
                 />
-                <MetricPanel
-                  label="Remaining Useful Life"
-                  value={formatHours(selectedEquipment.remainingLife)}
-                  sublabel="Estimated time to failure"
-                  status={
-                    selectedEquipment.remainingLife < 100 ? 'critical'
-                    : selectedEquipment.remainingLife < 500 ? 'warning'
-                    : 'healthy'
-                  }
+                <RULPanel
+                  hours={selectedEquipment.remainingLife}
+                  confidence={selectedEquipment.rulConfidence}
+                  basis={selectedEquipment.rulBasis}
                 />
                 <MetricPanel
                   label="ML Readings"
@@ -417,6 +679,61 @@ export function EquipmentHealth() {
                   <SensorValue label="Torque" value={selectedEquipment.torque} unit="Nm" warn={65} crit={75} />
                 </div>
               </div>
+
+              {/* Threshold Alerts */}
+              {(selectedEquipment.thresholdWarnings > 0 || selectedEquipment.thresholdCriticals > 0) && (
+                <div className="panel">
+                  <div className="panel-header">
+                    <Zap size={16} />
+                    Threshold Alerts
+                    <span className="ml-auto text-xs font-normal text-ash">Accumulated since page load</span>
+                  </div>
+                  <div className="p-4">
+                    <div className="flex items-center gap-4 mb-4">
+                      <div className="flex items-center gap-2 px-3 py-1.5 bg-critical/10 border border-critical/30 rounded-lg">
+                        <span className="font-display text-lg font-bold text-critical">{selectedEquipment.thresholdCriticals}</span>
+                        <span className="text-xs text-critical">Critical</span>
+                      </div>
+                      <div className="flex items-center gap-2 px-3 py-1.5 bg-warning/10 border border-warning/30 rounded-lg">
+                        <span className="font-display text-lg font-bold text-warning">{selectedEquipment.thresholdWarnings}</span>
+                        <span className="text-xs text-warning">Warning</span>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      {(['vibration', 'temperature', 'power'] as const).map((sensor) => {
+                        const level = selectedEquipment.currentThresholds[sensor];
+                        const value = sensor === 'vibration' ? selectedEquipment.vibration
+                          : sensor === 'temperature' ? selectedEquipment.temperature
+                          : selectedEquipment.power;
+                        const unit = sensor === 'vibration' ? 'mm/s' : sensor === 'temperature' ? '°C' : 'kW';
+                        const thresholds = THRESHOLDS[sensor];
+                        const color = level === 'critical' ? 'text-critical' : level === 'warning' ? 'text-warning' : 'text-healthy';
+                        const bg = level === 'critical' ? 'bg-critical/10' : level === 'warning' ? 'bg-warning/10' : 'bg-steel';
+                        return (
+                          <div key={sensor} className={`flex items-center justify-between p-2 rounded-lg ${bg}`}>
+                            <span className="text-xs text-zinc-300 capitalize">{sensor}</span>
+                            <div className="flex items-center gap-3">
+                              <span className="text-[10px] text-ash">
+                                W:{thresholds.warning} C:{thresholds.critical}
+                              </span>
+                              <span className={`font-mono text-sm font-bold ${color}`}>
+                                {value.toFixed(1)} {unit}
+                              </span>
+                              <span className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-bold uppercase ${
+                                level === 'critical' ? 'bg-critical/20 text-critical'
+                                : level === 'warning' ? 'bg-warning/20 text-warning'
+                                : 'bg-healthy/20 text-healthy'
+                              }`}>
+                                {level}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Risk Drivers */}
               {selectedEquipment.drivers && Object.keys(selectedEquipment.drivers).length > 0 && (
@@ -600,6 +917,33 @@ function MetricPanel({
       <p className="text-xs text-slate uppercase tracking-wider mb-2">{label}</p>
       <p className={`font-display text-2xl font-bold ${colors[status]}`}>{value}</p>
       <p className="text-xs text-ash mt-1">{sublabel}</p>
+    </div>
+  );
+}
+
+function RULPanel({
+  hours, confidence, basis,
+}: {
+  hours: number; confidence: 'high' | 'medium' | 'low'; basis: string;
+}) {
+  const status = hours < 48 ? 'critical' : hours < 168 ? 'warning' : 'healthy';
+  const colors = { healthy: 'text-healthy', warning: 'text-warning', critical: 'text-critical' };
+  const confidenceColors = {
+    high: 'bg-healthy/20 text-healthy border-healthy/30',
+    medium: 'bg-warning/20 text-warning border-warning/30',
+    low: 'bg-slate/20 text-slate border-slate/30',
+  };
+
+  return (
+    <div className="panel p-4">
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-xs text-slate uppercase tracking-wider">Remaining Useful Life</p>
+        <span className={`px-1.5 py-0.5 rounded text-[9px] font-mono uppercase border ${confidenceColors[confidence]}`}>
+          {confidence}
+        </span>
+      </div>
+      <p className={`font-display text-2xl font-bold ${colors[status]}`}>{formatHours(hours)}</p>
+      <p className="text-xs text-ash mt-1">{basis}</p>
     </div>
   );
 }

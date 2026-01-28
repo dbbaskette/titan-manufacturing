@@ -60,9 +60,7 @@ export function Layout({ children, currentView, onViewChange }: LayoutProps) {
 
           {/* Logo */}
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-ember rounded-lg flex items-center justify-center">
-              <span className="font-display font-bold text-white text-sm">T</span>
-            </div>
+            <img src="/titan-icon.jpg" alt="Titan" className="w-11 h-11 object-contain rounded-lg" />
             <div>
               <h1 className="font-display font-bold text-lg tracking-wider text-white">
                 TITAN <span className="text-ember">5.0</span>
