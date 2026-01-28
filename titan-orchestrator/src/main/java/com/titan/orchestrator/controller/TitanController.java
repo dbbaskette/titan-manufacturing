@@ -77,6 +77,19 @@ public class TitanController {
         return proxyPost("/ml/predictions/reset");
     }
 
+    @PostMapping("/ml/training/generate")
+    public ResponseEntity<String> mlTrainingGenerate(
+            @RequestParam(defaultValue = "500") int normalCount,
+            @RequestParam(defaultValue = "100") int failureCountPerPattern
+    ) {
+        return proxyPost("/ml/training/generate?normalCount=" + normalCount + "&failureCountPerPattern=" + failureCountPerPattern);
+    }
+
+    @GetMapping("/ml/training/stats")
+    public ResponseEntity<String> mlTrainingStats() {
+        return proxyGet("/ml/training/stats");
+    }
+
     private ResponseEntity<String> proxyGet(String path) {
         try {
             String body = restTemplate.getForObject(maintenanceUrl + path, String.class);
