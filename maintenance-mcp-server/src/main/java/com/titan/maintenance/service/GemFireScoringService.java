@@ -601,105 +601,94 @@ public class GemFireScoringService implements MqttCallback {
     }
 
     /**
-     * Diagnose probable failure cause using all 6 sensor types.
-     * Each degradation pattern has a distinct sensor signature:
-     *   BEARING_DEGRADATION: vibration↑↑, temp↑, power/rpm/torque/pressure ~normal
-     *   ELECTRICAL_FAULT:    vibration↑, temp↑, power↑↑, rpm may drop
-     *   COOLANT_FAILURE:     temp↑↑, pressure↓, vibration ~normal
-     *   MOTOR_BURNOUT:       temp↑↑↑ (rapid), vibration irregular, power↑
-     *   SPINDLE_WEAR:        rpm↓, vibration↑ (slow), torque fluctuations
+     * Diagnose probable failure cause using weighted matrix scoring across all 6 sensors.
+     *
+     * Each fault type has an expected sensor range and per-sensor weight.
+     * All 5 fault types are scored against all 6 sensors simultaneously —
+     * the fault with the highest weighted score wins.
+     *
+     * See docs/fault-classification-matrix.md for the full derivation.
      */
     private String diagnoseProbableCause(
             double vibrationAvg, double temperatureAvg, double powerAvg,
             double rpmAvg, double pressureAvg, double torqueAvg,
             double vibTrendRate, double tempTrendRate) {
 
-        // Heuristic diagnosis based on sensor deviations from baselines.
-        // Baselines: vib=2.0, temp=50, power=15, rpm=8500, pressure=6.0, torque=45
-        // Thresholds tuned for early detection with HIGH degradation caps.
-        boolean vibElevated = vibrationAvg > 2.3;
-        boolean vibHigh = vibrationAvg > 3.0;
-        boolean vibCritical = vibrationAvg > 4.0;
-        boolean tempElevated = temperatureAvg > 52.5;  // +2.5°C from 50 baseline
-        boolean tempHigh = temperatureAvg > 58.0;
-        boolean tempCritical = temperatureAvg > 80.0;
-        boolean powerElevated = powerAvg > 16.0;       // +1 kW from 15 baseline
-        boolean powerHigh = powerAvg > 20.0;
-        boolean powerSpike = powerAvg > 40.0;
-        boolean rpmDegraded = rpmAvg < 8350.0;         // -150 from 8500 baseline
-        boolean rpmLow = rpmAvg < 7500.0;
-        boolean pressureLow = pressureAvg < 5.5;       // -0.5 from 6.0 baseline
-        boolean pressureCritical = pressureAvg < 4.5;
-        boolean torqueElevated = torqueAvg > 46.0;     // +1 from 45 baseline
-        boolean torqueHigh = torqueAvg > 50.0;
+        // ── Fault type definitions: [minVib, maxVib, wVib, minTemp, maxTemp, wTemp,
+        //                              minPow, maxPow, wPow, minRpm, maxRpm, wRpm,
+        //                              minPres, maxPres, wPres, minTorq, maxTorq, wTorq]
+        double[][] matrix = {
+            // BEARING_DEGRADATION: vibration dominant, power/pressure/rpm ~normal
+            {3.0, 8.0, 3,  55, 95, 1,  14, 18, 1,  8000, 8600, 1,  5.5, 6.5, 1,  46, 55, 1},
+            // MOTOR_BURNOUT: temperature dominant + power elevated, steep RPM drop
+            {2.3, 5.0, 1,  65, 120, 3,  19, 40, 2,  6000, 7800, 2,  5.5, 6.5, 1,  46, 52, 1},
+            // SPINDLE_WEAR: RPM drops + torque spikes, power/pressure ~normal
+            {2.8, 7.0, 2,  52, 65, 1,  14, 18, 1,  5000, 7500, 3,  5.5, 6.5, 1,  49, 65, 2},
+            // COOLANT_FAILURE: pressure drops + temp rises, power/RPM ~normal
+            {2.0, 3.5, 1,  57, 95, 2,  14, 17, 1,  8200, 9000, 1,  1.0, 5.2, 3,  44, 48, 1},
+            // ELECTRICAL_FAULT: power surges + RPM drops, erratic across all
+            {2.3, 6.0, 1,  54, 75, 1,  20, 50, 3,  3000, 7500, 2,  3.5, 5.8, 1,  47, 58, 1},
+        };
 
-        // ── MOTOR_BURNOUT: temperature dominant + power elevated ──
-        if (tempCritical && powerHigh) {
-            return "Motor burnout — temperature at " + String.format("%.0f", temperatureAvg)
-                    + "°C (critical) with power draw at " + String.format("%.1f", powerAvg) + " kW";
-        }
-        if (tempHigh && powerElevated && !pressureLow) {
-            return "Motor burnout — temperature at " + String.format("%.0f", temperatureAvg)
-                    + "°C with power draw at " + String.format("%.1f", powerAvg)
-                    + " kW, motor overheating under load";
-        }
-        if (tempElevated && powerElevated && tempTrendRate > 0.01 && !pressureLow) {
-            return "Motor burnout risk — temperature at " + String.format("%.0f", temperatureAvg)
-                    + "°C rising with elevated power (" + String.format("%.1f", powerAvg)
-                    + " kW), check motor windings";
-        }
+        double[] sensorValues = {vibrationAvg, temperatureAvg, powerAvg, rpmAvg, pressureAvg, torqueAvg};
 
-        // ── COOLANT_FAILURE: temperature rises with pressure drop ──
-        if (tempHigh && pressureLow) {
-            return "Coolant system failure — temperature at " + String.format("%.0f", temperatureAvg)
-                    + "°C with coolant pressure at " + String.format("%.1f", pressureAvg) + " bar (normal: 6.0)";
-        }
-        if (tempElevated && pressureLow) {
-            return "Coolant system degradation — temperature at " + String.format("%.0f", temperatureAvg)
-                    + "°C with pressure dropping to " + String.format("%.1f", pressureAvg) + " bar";
+        // Score each fault type
+        double bestScore = -1;
+        int bestFault = -1;
+        double[] scores = new double[5];
+
+        for (int f = 0; f < 5; f++) {
+            double score = 0;
+            for (int s = 0; s < 6; s++) {
+                double min = matrix[f][s * 3];
+                double max = matrix[f][s * 3 + 1];
+                double weight = matrix[f][s * 3 + 2];
+                if (sensorValues[s] >= min && sensorValues[s] <= max) {
+                    score += weight;
+                }
+            }
+            scores[f] = score;
+            if (score > bestScore) {
+                bestScore = score;
+                bestFault = f;
+            }
         }
 
-        // ── ELECTRICAL_FAULT: power elevated + RPM drop, temperature not dominant ──
-        if (powerSpike && vibElevated) {
-            return "Electrical fault — power draw at " + String.format("%.1f", powerAvg)
-                    + " kW (normal: 15) with vibration at " + String.format("%.1f", vibrationAvg) + " mm/s";
-        }
-        if (powerElevated && rpmDegraded && !tempHigh) {
-            return "Electrical fault — power at " + String.format("%.1f", powerAvg)
-                    + " kW (normal: 15), RPM degraded to " + String.format("%.0f", rpmAvg)
-                    + " — motor drawing excess current";
-        }
-        if (powerHigh && vibElevated && !tempCritical) {
-            return "Electrical fault — elevated power (" + String.format("%.1f", powerAvg)
-                    + " kW) with vibration at " + String.format("%.1f", vibrationAvg) + " mm/s";
+        // If no fault scored above 0, fall back to dominant deviation
+        if (bestScore <= 0) {
+            return diagnoseFallback(vibrationAvg, temperatureAvg, powerAvg,
+                    rpmAvg, pressureAvg, torqueAvg, vibTrendRate, tempTrendRate);
         }
 
-        // ── SPINDLE_WEAR: RPM drops + torque/vibration increase ──
-        if (rpmLow && (vibHigh || torqueHigh)) {
-            return "Spindle wear — RPM degraded to " + String.format("%.0f", rpmAvg) + " (normal: 8500)"
-                    + (torqueHigh ? ", torque at " + String.format("%.1f", torqueAvg) + " Nm" : "")
-                    + (vibHigh ? ", vibration at " + String.format("%.1f", vibrationAvg) + " mm/s" : "");
-        }
-        if (rpmDegraded && (vibElevated || torqueElevated)) {
-            return "Spindle wear — RPM at " + String.format("%.0f", rpmAvg) + " (normal: 8500)"
-                    + (torqueElevated ? ", torque at " + String.format("%.1f", torqueAvg) + " Nm" : "")
-                    + (vibElevated ? ", vibration at " + String.format("%.1f", vibrationAvg) + " mm/s" : "");
-        }
+        // Build diagnostic message with sensor details
+        return switch (bestFault) {
+            case 0 -> "Bearing degradation — vibration at " + String.format("%.1f", vibrationAvg)
+                    + " mm/s (normal: 2.0), temperature at " + String.format("%.0f", temperatureAvg) + "°C"
+                    + (vibTrendRate > 0.01 ? ", vibration trending upward" : "");
+            case 1 -> "Motor burnout — temperature at " + String.format("%.0f", temperatureAvg)
+                    + "°C (normal: 50) with power draw at " + String.format("%.1f", powerAvg) + " kW"
+                    + ", RPM at " + String.format("%.0f", rpmAvg);
+            case 2 -> "Spindle wear — RPM degraded to " + String.format("%.0f", rpmAvg)
+                    + " (normal: 8500), torque at " + String.format("%.1f", torqueAvg) + " Nm"
+                    + ", vibration at " + String.format("%.1f", vibrationAvg) + " mm/s";
+            case 3 -> "Coolant system failure — pressure at " + String.format("%.1f", pressureAvg)
+                    + " bar (normal: 6.0), temperature at " + String.format("%.0f", temperatureAvg) + "°C";
+            case 4 -> "Electrical fault — power draw at " + String.format("%.1f", powerAvg)
+                    + " kW (normal: 15), RPM at " + String.format("%.0f", rpmAvg)
+                    + ", pressure at " + String.format("%.1f", pressureAvg) + " bar";
+            default -> "Multiple sensor anomalies detected";
+        };
+    }
 
-        // ── BEARING_DEGRADATION: vibration dominant, other sensors mostly normal ──
-        if (vibCritical) {
-            return "Bearing degradation — vibration at " + String.format("%.1f", vibrationAvg)
-                    + " mm/s" + (vibTrendRate > 0.01 ? ", trending upward" : "") + ", bearing wear pattern";
-        }
-        if (vibHigh && !powerElevated && !pressureLow) {
-            return "Bearing wear — vibration elevated at " + String.format("%.1f", vibrationAvg) + " mm/s";
-        }
-        if (vibElevated && vibTrendRate > 0.01 && !powerElevated && !pressureLow && !rpmDegraded) {
-            return "Early bearing wear — vibration at " + String.format("%.1f", vibrationAvg)
-                    + " mm/s with upward trend, monitor for progressive degradation";
-        }
+    /**
+     * Fallback diagnosis when no fault type scores above 0 in the matrix.
+     * Uses trend rates and dominant sensor deviation.
+     */
+    private String diagnoseFallback(
+            double vibrationAvg, double temperatureAvg, double powerAvg,
+            double rpmAvg, double pressureAvg, double torqueAvg,
+            double vibTrendRate, double tempTrendRate) {
 
-        // ── Early trends (fallback) ──
         if (vibTrendRate > 0.02 && tempTrendRate > 0.01) {
             return "Early-stage degradation — vibration and temperature trending upward";
         }
@@ -710,15 +699,14 @@ public class GemFireScoringService implements MqttCallback {
             return "Emerging thermal anomaly — temperature trending upward, check coolant and motor";
         }
 
-        // Fallback: identify the most deviated sensor relative to its baseline
-        double vibDev = (vibrationAvg - 2.0) / 2.0;    // normalized deviation
+        // Identify most deviated sensor
+        double vibDev = (vibrationAvg - 2.0) / 2.0;
         double tempDev = (temperatureAvg - 50.0) / 50.0;
         double powerDev = (powerAvg - 15.0) / 15.0;
-        double rpmDev = (8500.0 - rpmAvg) / 8500.0;    // inverted — lower is worse
-        double pressureDev = (6.0 - pressureAvg) / 6.0; // inverted
+        double rpmDev = (8500.0 - rpmAvg) / 8500.0;
+        double pressureDev = (6.0 - pressureAvg) / 6.0;
         double torqueDev = (torqueAvg - 45.0) / 45.0;
 
-        // Find dominant deviation
         String dominant = "vibration";
         double maxDev = vibDev;
         if (tempDev > maxDev) { maxDev = tempDev; dominant = "temperature"; }

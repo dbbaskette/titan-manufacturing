@@ -156,6 +156,30 @@ class TitanApi {
     const query = limit ? `?limit=${limit}` : '';
     return this.fetch<AutomatedAction[]>(`/automated-actions${query}`);
   }
+
+  // Settings endpoints
+  async getSettings(): Promise<AppSetting[]> {
+    return this.fetch<AppSetting[]>('/settings');
+  }
+
+  async updateSetting(key: string, value: string): Promise<AppSetting> {
+    return this.fetch<AppSetting>(`/settings/${key}`, {
+      method: 'PUT',
+      body: JSON.stringify({ value }),
+    });
+  }
+
+  async getLlmModels(): Promise<LlmModel[]> {
+    return this.fetch<LlmModel[]>('/settings/llm-models');
+  }
+
+  async setDefaultLlmModel(modelId: string): Promise<{ model_id: string; is_default: boolean }> {
+    return this.fetch(`/settings/llm-models/${modelId}/default`, { method: 'PUT' });
+  }
+
+  async getAdminEmail(): Promise<{ admin_email: string }> {
+    return this.fetch('/settings/admin-email');
+  }
 }
 
 // Generator types
@@ -371,6 +395,23 @@ export interface ApprovalResponse {
 export interface DismissResponse {
   success: boolean;
   message: string;
+}
+
+export interface AppSetting {
+  setting_key: string;
+  setting_value: string;
+  encrypted: boolean;
+  updated_at: string;
+  updated_by: string;
+}
+
+export interface LlmModel {
+  model_id: string;
+  provider: string;
+  model_name: string;
+  base_url: string | null;
+  is_default: boolean;
+  created_at: string;
 }
 
 export interface AutomatedAction {

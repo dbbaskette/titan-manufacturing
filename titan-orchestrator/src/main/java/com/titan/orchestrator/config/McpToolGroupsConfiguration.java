@@ -151,7 +151,9 @@ public class McpToolGroupsConfiguration {
                        toolName.equals("checkStock") ||
                        toolName.equals("searchProducts") ||
                        toolName.equals("findAlternatives") ||
-                       toolName.equals("calculateReorder");
+                       toolName.equals("calculateReorder") ||
+                       toolName.equals("get_compatible_parts") ||
+                       toolName.equals("getCompatibleParts");
             }
         );
     }

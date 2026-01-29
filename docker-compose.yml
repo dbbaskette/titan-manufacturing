@@ -172,6 +172,7 @@ services:
       - MAINTENANCE_URL=http://maintenance-mcp-server:8082
       - GENERATOR_URL=http://sensor-data-generator:8090
       - ORDER_URL=http://order-mcp-server:8085
+      - TITAN_ADMIN_EMAIL=${TITAN_ADMIN_EMAIL:-}
     depends_on:
       greenplum:
         condition: service_healthy
@@ -408,6 +409,16 @@ services:
     environment:
       SPRING_PROFILES_ACTIVE: docker
       <<: *greenplum-env
+      SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      TITAN_ADMIN_EMAIL: ${TITAN_ADMIN_EMAIL:-}
+      TITAN_FROM_EMAIL: ${TITAN_FROM_EMAIL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-ollama}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-http://host.docker.internal:11434}
+      OPENAI_MODEL: ${OPENAI_MODEL:-llama3.1:8b}
+      OPENAI_TEMPERATURE: ${OPENAI_TEMPERATURE:-0.7}
     depends_on:
       greenplum-init:
         condition: service_completed_successfully

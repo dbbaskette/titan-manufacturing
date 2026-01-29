@@ -67,7 +67,10 @@ spring:
             logistics-tools:
               url: ${MCP_SERVERS_LOGISTICS:http://localhost:8084}
               endpoint: /mcp
-            # order-tools, communications-tools, governance-tools disabled until /mcp endpoint configured
+            communications-tools:
+              url: ${MCP_SERVERS_COMMUNICATIONS:http://localhost:8086}
+              endpoint: /mcp
+            # order-tools, governance-tools disabled until /mcp endpoint configured
 
 # Anomaly event configuration
 anomaly:

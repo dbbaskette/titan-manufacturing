@@ -2,9 +2,14 @@ package com.titan.orchestrator.controller;
 
 import com.embabel.agent.api.invocation.AgentInvocation;
 import com.embabel.agent.core.AgentPlatform;
+import com.titan.orchestrator.model.AnomalyEvent;
+import com.titan.orchestrator.model.AnomalyEvent.CriticalAnomalyInput;
 import com.titan.orchestrator.model.AnomalyResponse.CriticalAnomalyResponse;
 import com.titan.orchestrator.service.AutomatedActionService;
+import com.titan.orchestrator.service.NotificationService;
 import com.titan.orchestrator.service.RecommendationService;
+
+import java.time.Instant;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -27,14 +32,17 @@ public class RecommendationController {
     private final RecommendationService recommendationService;
     private final AutomatedActionService automatedActionService;
     private final AgentPlatform agentPlatform;
+    private final NotificationService notificationService;
 
     public RecommendationController(
             RecommendationService recommendationService,
             AutomatedActionService automatedActionService,
-            AgentPlatform agentPlatform) {
+            AgentPlatform agentPlatform,
+            NotificationService notificationService) {
         this.recommendationService = recommendationService;
         this.automatedActionService = automatedActionService;
         this.agentPlatform = agentPlatform;
+        this.notificationService = notificationService;
     }
 
     // ── Recommendations Endpoints ────────────────────────────────────────────
@@ -90,20 +98,41 @@ public class RecommendationController {
             // Mark as approved
             recommendationService.approve(recommendationId, approvedBy);
 
-            // Invoke Embabel agent to schedule maintenance
-            // The goal is to complete the maintenance scheduling now that it's approved
+            // Build an AnomalyEvent from the stored recommendation so the GOAP planner
+            // can route it through handleCriticalAnomaly (which schedules maintenance + notifies)
             log.info(">>> Invoking Embabel agent to schedule approved maintenance...");
 
-            var invocation = AgentInvocation.create(agentPlatform, CriticalAnomalyResponse.class);
-            CriticalAnomalyResponse result = invocation.invoke(
-                    "Schedule maintenance for equipment " + rec.get("equipment_id") +
-                    " at facility " + rec.get("facility_id") +
-                    ". Probable cause: " + rec.get("probable_cause") +
-                    ". Parts have already been reserved. Use maintenance type: PREVENTIVE."
+            double failProb = rec.get("failure_probability") != null
+                    ? ((Number) rec.get("failure_probability")).doubleValue() : 0.6;
+            AnomalyEvent approvalEvent = new AnomalyEvent(
+                    "APPROVAL-" + recommendationId,
+                    "APPROVAL",
+                    Instant.now(),
+                    (String) rec.get("equipment_id"),
+                    (String) rec.get("facility_id"),
+                    new AnomalyEvent.Prediction(
+                            failProb,
+                            "HIGH",
+                            (String) rec.get("probable_cause"),
+                            0, 0, 0, 0, 0, 0,
+                            Instant.now().toString()
+                    )
             );
+
+            var invocation = AgentInvocation.create(agentPlatform, CriticalAnomalyResponse.class);
+            CriticalAnomalyResponse result = invocation.invoke(new CriticalAnomalyInput(approvalEvent));
 
             // Update recommendation with work order ID
             recommendationService.setWorkOrderId(recommendationId, result.workOrderId());
+
+            // Send notification deterministically (don't rely on LLM calling sendNotification)
+            notificationService.sendMaintenanceAlert(
+                    (String) rec.get("equipment_id"),
+                    (String) rec.get("facility_id"),
+                    (String) rec.get("probable_cause"),
+                    failProb,
+                    result.workOrderId()
+            );
 
             log.info("Recommendation {} approved - Work Order: {}", recommendationId, result.workOrderId());
 

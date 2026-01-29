@@ -550,6 +550,71 @@ INSERT INTO products (sku, name, description, division_id, category, subcategory
 ('INDL-GEN-019', 'Take-Up Unit', 'Take-up bearing unit', 'INDUSTRIAL', 'Power Transmission', 'Mounted Bearings', 145.00, 2.8, 14),
 ('INDL-GEN-020', 'Bearing Insert', 'Set screw bearing insert', 'INDUSTRIAL', 'Power Transmission', 'Mounted Bearings', 25.00, 0.3, 7);
 
+-- CNC Spindle Motors (10)
+INSERT INTO products (sku, name, description, division_id, category, subcategory, unit_price, weight_kg, lead_time_days) VALUES
+('INDL-MOT-5500', 'CNC Spindle Motor - 15kW', 'AC induction spindle motor 15kW 12000RPM, integrated encoder, liquid cooled', 'INDUSTRIAL', 'Motors & Drives', 'Spindle Motors', 4200.00, 45.0, 35),
+('INDL-MOT-5501', 'CNC Spindle Motor - 22kW', 'AC induction spindle motor 22kW 10000RPM, integrated encoder, liquid cooled', 'INDUSTRIAL', 'Motors & Drives', 'Spindle Motors', 5800.00, 58.0, 40),
+('INDL-MOT-5502', 'CNC Spindle Motor - 30kW', 'High-torque spindle motor 30kW 8000RPM for heavy cutting', 'INDUSTRIAL', 'Motors & Drives', 'Spindle Motors', 7500.00, 72.0, 45),
+('INDL-MOT-5503', 'Built-In Spindle Motor', 'Direct-drive built-in motor for high-speed spindle, 18kW 24000RPM', 'INDUSTRIAL', 'Motors & Drives', 'Spindle Motors', 12000.00, 25.0, 60),
+('INDL-MOT-5510', 'Servo Motor - X Axis', 'CNC axis servo motor 5kW with brake and encoder, NEMA 34 mount', 'INDUSTRIAL', 'Motors & Drives', 'Servo Motors', 1800.00, 12.0, 21),
+('INDL-MOT-5511', 'Servo Motor - Y Axis', 'CNC axis servo motor 7.5kW with brake and encoder', 'INDUSTRIAL', 'Motors & Drives', 'Servo Motors', 2200.00, 15.0, 21),
+('INDL-MOT-5512', 'Servo Motor - Z Axis', 'CNC axis servo motor 10kW with holding brake, vertical axis rated', 'INDUSTRIAL', 'Motors & Drives', 'Servo Motors', 2800.00, 18.0, 25),
+('INDL-MOT-5520', 'Coolant Pump Motor', 'TEFC motor for coolant system 2.2kW 3-phase, IP55 washdown rated', 'INDUSTRIAL', 'Motors & Drives', 'Pump Motors', 380.00, 8.0, 14),
+('INDL-MOT-5521', 'Hydraulic Power Unit Motor', 'High-pressure HPU motor 5.5kW continuous duty', 'INDUSTRIAL', 'Motors & Drives', 'Pump Motors', 650.00, 15.0, 18),
+('INDL-MOT-5522', 'Chip Conveyor Motor', 'Geared conveyor motor 0.75kW with overload protection', 'INDUSTRIAL', 'Motors & Drives', 'Conveyor Motors', 280.00, 6.0, 14);
+
+-- Motor Controllers & VFDs (10)
+INSERT INTO products (sku, name, description, division_id, category, subcategory, unit_price, weight_kg, lead_time_days) VALUES
+('INDL-CTR-1100', 'Spindle Drive VFD - 15kW', 'Variable frequency drive for spindle motor, vector control, 15kW 400V', 'INDUSTRIAL', 'Electrical & Controls', 'Motor Controllers', 3200.00, 12.0, 28),
+('INDL-CTR-1101', 'Spindle Drive VFD - 22kW', 'Variable frequency drive for spindle motor, vector control, 22kW 400V', 'INDUSTRIAL', 'Electrical & Controls', 'Motor Controllers', 4500.00, 15.0, 30),
+('INDL-CTR-1102', 'Spindle Drive VFD - 30kW', 'High-performance spindle inverter 30kW with regenerative braking', 'INDUSTRIAL', 'Electrical & Controls', 'Motor Controllers', 6200.00, 20.0, 35),
+('INDL-CTR-1110', 'Servo Amplifier - Single Axis', 'Digital servo amplifier 5kW, EtherCAT interface', 'INDUSTRIAL', 'Electrical & Controls', 'Servo Drives', 1500.00, 3.0, 21),
+('INDL-CTR-1111', 'Servo Amplifier - Dual Axis', 'Dual-axis servo amplifier 2x5kW, EtherCAT', 'INDUSTRIAL', 'Electrical & Controls', 'Servo Drives', 2800.00, 5.0, 25),
+('INDL-CTR-1120', 'CNC Controller Board', 'Main CNC control PCB with CPU module and I/O', 'INDUSTRIAL', 'Electrical & Controls', 'CNC Controls', 8500.00, 2.0, 45),
+('INDL-CTR-1121', 'I/O Module - Digital', 'Digital I/O expansion module 32-point', 'INDUSTRIAL', 'Electrical & Controls', 'CNC Controls', 450.00, 0.5, 14),
+('INDL-CTR-1122', 'I/O Module - Analog', 'Analog I/O module 8-channel 16-bit', 'INDUSTRIAL', 'Electrical & Controls', 'CNC Controls', 680.00, 0.5, 14),
+('INDL-CTR-1130', 'Power Supply Unit - 24V', 'Switch-mode PSU 24VDC 20A for CNC control cabinet', 'INDUSTRIAL', 'Electrical & Controls', 'Power Supply', 220.00, 1.5, 10),
+('INDL-CTR-1131', 'Power Supply Unit - 48V', 'Switch-mode PSU 48VDC 10A for servo system', 'INDUSTRIAL', 'Electrical & Controls', 'Power Supply', 350.00, 2.0, 14);
+
+-- Electrical Protection & Wiring (10)
+INSERT INTO products (sku, name, description, division_id, category, subcategory, unit_price, weight_kg, lead_time_days) VALUES
+('INDL-ELC-2001', 'Main Contactor - 40A', 'AC contactor 40A 3-pole for spindle motor switching', 'INDUSTRIAL', 'Electrical & Controls', 'Contactors & Relays', 85.00, 0.5, 7),
+('INDL-ELC-2002', 'Main Contactor - 65A', 'AC contactor 65A 3-pole for high-power spindle', 'INDUSTRIAL', 'Electrical & Controls', 'Contactors & Relays', 145.00, 0.8, 10),
+('INDL-ELC-2003', 'Overload Relay - 15kW', 'Electronic overload relay with phase-loss protection', 'INDUSTRIAL', 'Electrical & Controls', 'Contactors & Relays', 120.00, 0.3, 7),
+('INDL-ELC-2004', 'Circuit Breaker - Motor', 'Motor protection circuit breaker 25-40A adjustable', 'INDUSTRIAL', 'Electrical & Controls', 'Circuit Protection', 65.00, 0.4, 7),
+('INDL-ELC-2005', 'Surge Protector - Cabinet', 'DIN-rail surge protector for CNC control cabinet', 'INDUSTRIAL', 'Electrical & Controls', 'Circuit Protection', 180.00, 0.3, 10),
+('INDL-ELC-2006', 'EMC Filter - Drive', 'EMC/RFI filter for VFD installation, 30A rated', 'INDUSTRIAL', 'Electrical & Controls', 'Filters', 250.00, 2.0, 14),
+('INDL-ELC-2007', 'Braking Resistor - Spindle', 'Dynamic braking resistor for spindle drive regeneration', 'INDUSTRIAL', 'Electrical & Controls', 'Braking', 180.00, 3.0, 14),
+('INDL-ELC-2008', 'Encoder - Spindle', 'Incremental encoder 2048 PPR for spindle feedback', 'INDUSTRIAL', 'Electrical & Controls', 'Encoders', 420.00, 0.3, 18),
+('INDL-ELC-2009', 'Encoder - Linear Scale', 'Linear glass scale encoder 500mm, 1um resolution', 'INDUSTRIAL', 'Electrical & Controls', 'Encoders', 850.00, 1.5, 25),
+('INDL-ELC-2010', 'Cable Set - Spindle Motor', 'Power + encoder cable set for spindle motor, 5m shielded', 'INDUSTRIAL', 'Electrical & Controls', 'Cables', 320.00, 3.0, 10);
+
+-- Coolant System Components (10)
+INSERT INTO products (sku, name, description, division_id, category, subcategory, unit_price, weight_kg, lead_time_days) VALUES
+('INDL-CLT-3001', 'Coolant Pump Assembly - Standard', 'Complete coolant pump unit 20 bar, immersion type with motor', 'INDUSTRIAL', 'Coolant Systems', 'Pumps', 680.00, 15.0, 21),
+('INDL-CLT-3002', 'Coolant Pump Assembly - High Pressure', 'Through-spindle coolant pump 70 bar with filtration', 'INDUSTRIAL', 'Coolant Systems', 'Pumps', 2400.00, 28.0, 30),
+('INDL-CLT-3003', 'Coolant Tank Assembly', 'Stainless steel coolant tank 200L with baffles and level sensor', 'INDUSTRIAL', 'Coolant Systems', 'Tanks', 950.00, 35.0, 25),
+('INDL-CLT-3004', 'Coolant Filter - Paper Band', 'Gravity band filter for coolant filtration, 100 micron', 'INDUSTRIAL', 'Coolant Systems', 'Filtration', 1200.00, 45.0, 28),
+('INDL-CLT-3005', 'Coolant Filter - Magnetic Separator', 'Magnetic drum separator for ferrous particle removal', 'INDUSTRIAL', 'Coolant Systems', 'Filtration', 2800.00, 60.0, 35),
+('INDL-CLT-3006', 'Coolant Chiller Unit', 'Refrigerated coolant chiller 5kW cooling capacity', 'INDUSTRIAL', 'Coolant Systems', 'Temperature Control', 4500.00, 80.0, 40),
+('INDL-CLT-3007', 'Coolant Heat Exchanger', 'Plate heat exchanger for coolant temperature regulation', 'INDUSTRIAL', 'Coolant Systems', 'Temperature Control', 1800.00, 25.0, 28),
+('INDL-CLT-3008', 'Coolant Pressure Sensor', 'Pressure transmitter 0-100 bar, 4-20mA output', 'INDUSTRIAL', 'Coolant Systems', 'Sensors', 280.00, 0.3, 10),
+('INDL-CLT-3009', 'Coolant Flow Switch', 'Flow switch for coolant monitoring with alarm contact', 'INDUSTRIAL', 'Coolant Systems', 'Sensors', 120.00, 0.2, 7),
+('INDL-CLT-3010', 'Coolant Concentration Refractometer', 'Digital inline refractometer for coolant concentration monitoring', 'INDUSTRIAL', 'Coolant Systems', 'Sensors', 950.00, 1.0, 21);
+
+-- Spindle Components & Wear Parts (10)
+INSERT INTO products (sku, name, description, division_id, category, subcategory, unit_price, weight_kg, lead_time_days) VALUES
+('INDL-SPD-4001', 'Spindle Cartridge Assembly', 'Complete spindle cartridge with bearings pre-loaded, BT40 taper', 'INDUSTRIAL', 'Spindle Components', 'Cartridges', 8500.00, 30.0, 45),
+('INDL-SPD-4002', 'Spindle Cartridge Assembly - HSK', 'HSK63 spindle cartridge, ceramic hybrid bearings', 'INDUSTRIAL', 'Spindle Components', 'Cartridges', 12000.00, 25.0, 50),
+('INDL-SPD-4003', 'Spindle Drawbar Assembly', 'Drawbar with disc springs and gripper', 'INDUSTRIAL', 'Spindle Components', 'Drawbar', 650.00, 3.0, 21),
+('INDL-SPD-4004', 'Spindle Drawbar Spring Set', 'Belleville disc spring set for tool clamping force', 'INDUSTRIAL', 'Spindle Components', 'Drawbar', 180.00, 0.5, 10),
+('INDL-SPD-4005', 'Spindle Seal Kit', 'Complete labyrinth seal kit for spindle nose', 'INDUSTRIAL', 'Spindle Components', 'Seals', 320.00, 0.3, 14),
+('INDL-SPD-4006', 'Spindle Taper Wiper', 'Automatic taper cleaning wiper set', 'INDUSTRIAL', 'Spindle Components', 'Wipers', 85.00, 0.1, 7),
+('INDL-SPD-4007', 'Spindle Orientation Sensor', 'Proximity sensor for spindle orientation, M12 inductive', 'INDUSTRIAL', 'Spindle Components', 'Sensors', 95.00, 0.1, 7),
+('INDL-SPD-4008', 'Spindle Vibration Sensor', 'Accelerometer for spindle vibration monitoring, 4-20mA', 'INDUSTRIAL', 'Spindle Components', 'Sensors', 450.00, 0.2, 14),
+('INDL-SPD-4009', 'Spindle Grease Cartridge', 'Automatic lubrication cartridge for spindle bearings', 'INDUSTRIAL', 'Spindle Components', 'Lubrication', 45.00, 0.3, 7),
+('INDL-SPD-4010', 'Spindle Air Purge Kit', 'Air purge system to prevent contamination ingress', 'INDUSTRIAL', 'Spindle Components', 'Seals', 280.00, 1.0, 14);
+
 -- =============================================================================
 -- STOCK LEVELS (Multi-facility inventory)
 -- =============================================================================
@@ -581,6 +646,51 @@ INSERT INTO stock_levels (sku, facility_id, quantity, reorder_point) VALUES
 ('INDL-BRG-7420', 'SHA', 85, 25),
 ('INDL-BRG-7421', 'PHX', 28, 10),
 ('INDL-BRG-7421', 'MUC', 35, 15),
+-- CNC motors and drives
+('INDL-MOT-5500', 'ATL', 4, 2),
+('INDL-MOT-5500', 'PHX', 6, 2),
+('INDL-MOT-5500', 'DET', 3, 2),
+('INDL-MOT-5501', 'ATL', 2, 1),
+('INDL-MOT-5501', 'PHX', 3, 1),
+('INDL-MOT-5510', 'ATL', 8, 3),
+('INDL-MOT-5510', 'PHX', 12, 5),
+('INDL-MOT-5510', 'DET', 6, 3),
+('INDL-MOT-5520', 'ATL', 5, 2),
+('INDL-MOT-5520', 'PHX', 8, 3),
+-- Motor controllers and VFDs
+('INDL-CTR-1100', 'ATL', 3, 1),
+('INDL-CTR-1100', 'PHX', 4, 2),
+('INDL-CTR-1100', 'DET', 2, 1),
+('INDL-CTR-1101', 'ATL', 2, 1),
+('INDL-CTR-1101', 'PHX', 3, 1),
+('INDL-CTR-1110', 'ATL', 6, 3),
+('INDL-CTR-1110', 'PHX', 10, 4),
+('INDL-CTR-1120', 'ATL', 1, 1),
+('INDL-CTR-1120', 'PHX', 2, 1),
+-- Electrical protection
+('INDL-ELC-2001', 'ATL', 15, 5),
+('INDL-ELC-2001', 'PHX', 20, 8),
+('INDL-ELC-2003', 'ATL', 10, 4),
+('INDL-ELC-2004', 'ATL', 12, 5),
+('INDL-ELC-2005', 'ATL', 6, 2),
+('INDL-ELC-2008', 'ATL', 4, 2),
+('INDL-ELC-2008', 'PHX', 6, 2),
+-- Coolant system
+('INDL-CLT-3001', 'ATL', 3, 1),
+('INDL-CLT-3001', 'PHX', 4, 2),
+('INDL-CLT-3002', 'ATL', 2, 1),
+('INDL-CLT-3002', 'PHX', 2, 1),
+('INDL-CLT-3006', 'ATL', 1, 1),
+('INDL-CLT-3008', 'ATL', 8, 3),
+('INDL-CLT-3009', 'ATL', 10, 4),
+-- Spindle components
+('INDL-SPD-4001', 'ATL', 1, 1),
+('INDL-SPD-4001', 'PHX', 2, 1),
+('INDL-SPD-4003', 'ATL', 4, 2),
+('INDL-SPD-4004', 'ATL', 12, 5),
+('INDL-SPD-4005', 'ATL', 6, 2),
+('INDL-SPD-4008', 'ATL', 5, 2),
+('INDL-SPD-4009', 'ATL', 20, 8),
 -- EV components at Detroit and Shanghai
 ('MOBL-MH-001', 'DET', 180, 50),
 ('MOBL-MH-001', 'SHA', 420, 100),
@@ -2449,3 +2559,203 @@ CREATE TABLE automated_actions (
 CREATE INDEX idx_automated_actions_equipment ON automated_actions(equipment_id);
 CREATE INDEX idx_automated_actions_facility ON automated_actions(facility_id);
 CREATE INDEX idx_automated_actions_executed ON automated_actions(executed_at);
+
+-- =============================================================================
+-- Application Settings & LLM Model Configuration
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    setting_key   VARCHAR(100) PRIMARY KEY,
+    setting_value TEXT NOT NULL,
+    encrypted     BOOLEAN DEFAULT FALSE,
+    updated_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_by    VARCHAR(100) DEFAULT 'system'
+);
+
+CREATE TABLE IF NOT EXISTS llm_models (
+    model_id      VARCHAR(50) PRIMARY KEY,
+    provider      VARCHAR(50) NOT NULL,
+    model_name    VARCHAR(100) NOT NULL,
+    api_key       TEXT,
+    base_url      TEXT,
+    is_default    BOOLEAN DEFAULT FALSE,
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Seed default models
+INSERT INTO llm_models (model_id, provider, model_name, base_url, is_default)
+VALUES
+  ('ollama-llama3', 'ollama', 'llama3.1:8b', 'http://host.docker.internal:11434', true)
+ON CONFLICT DO NOTHING;
+
+-- Seed default settings
+INSERT INTO app_settings (setting_key, setting_value)
+VALUES ('communications_email', '')
+ON CONFLICT DO NOTHING;
+
+-- =============================================================================
+-- EQUIPMENT PARTS COMPATIBILITY MATRIX
+-- Links equipment types/models to compatible replacement parts by fault role.
+-- =============================================================================
+
+CREATE TABLE equipment_parts_compatibility (
+    id SERIAL PRIMARY KEY,
+    equipment_type VARCHAR(20) NOT NULL,
+    equipment_model VARCHAR(100),
+    sku VARCHAR(50) NOT NULL,
+    part_role VARCHAR(50) NOT NULL,
+    is_primary BOOLEAN DEFAULT TRUE,
+    notes TEXT
+);
+
+CREATE INDEX idx_compat_type ON equipment_parts_compatibility (equipment_type);
+CREATE INDEX idx_compat_model ON equipment_parts_compatibility (equipment_type, equipment_model);
+CREATE INDEX idx_compat_role ON equipment_parts_compatibility (part_role);
+
+-- Part roles map to fault types:
+--   Bearing degradation  → spindle_bearing, ball_screw_bearing, spindle_seal
+--   Motor burnout        → spindle_motor, motor_controller, encoder
+--   Spindle wear         → spindle_cartridge, spindle_drawbar, spindle_seal, spindle_bearing
+--   Coolant failure      → coolant_pump, coolant_filter, coolant_sensor, coolant_chiller
+--   Electrical fault     → motor_controller, power_supply, circuit_breaker, surge_protector
+
+INSERT INTO equipment_parts_compatibility (equipment_type, equipment_model, sku, part_role, is_primary, notes) VALUES
+-- ═══════════════════════════════════════════════════════════════════
+-- CNC-MILL: DMG MORI DMU 50 (15kW spindle)
+-- ═══════════════════════════════════════════════════════════════════
+('CNC-MILL', 'DMG MORI DMU 50', 'INDL-BRG-7420', 'spindle_bearing', TRUE, 'Angular contact bearing set for 12000RPM BT40 spindle'),
+('CNC-MILL', 'DMG MORI DMU 50', 'INDL-MOT-5500', 'spindle_motor', TRUE, '15kW AC induction spindle motor'),
+('CNC-MILL', 'DMG MORI DMU 50', 'INDL-CTR-1100', 'motor_controller', TRUE, '15kW VFD for spindle drive'),
+('CNC-MILL', 'DMG MORI DMU 50', 'INDL-SPD-4001', 'spindle_cartridge', TRUE, 'BT40 cartridge assembly'),
+('CNC-MILL', 'DMG MORI DMU 50', 'INDL-SPD-4003', 'spindle_drawbar', TRUE, 'Drawbar with disc springs'),
+('CNC-MILL', 'DMG MORI DMU 50', 'INDL-SPD-4005', 'spindle_seal', TRUE, 'Labyrinth seal kit'),
+('CNC-MILL', 'DMG MORI DMU 50', 'INDL-ELC-2001', 'contactor', TRUE, '40A contactor for 15kW motor'),
+('CNC-MILL', 'DMG MORI DMU 50', 'INDL-ELC-2003', 'overload_relay', TRUE, '15kW overload relay'),
+('CNC-MILL', 'DMG MORI DMU 50', 'INDL-ELC-2008', 'encoder', TRUE, 'Spindle encoder 2048 PPR'),
+
+-- ═══════════════════════════════════════════════════════════════════
+-- CNC-MILL: Mazak VTC-800 (22kW spindle)
+-- ═══════════════════════════════════════════════════════════════════
+('CNC-MILL', 'Mazak VTC-800', 'INDL-BRG-7421', 'spindle_bearing', TRUE, 'Cylindrical roller bearing for 10000RPM spindle'),
+('CNC-MILL', 'Mazak VTC-800', 'INDL-MOT-5501', 'spindle_motor', TRUE, '22kW AC induction spindle motor'),
+('CNC-MILL', 'Mazak VTC-800', 'INDL-CTR-1101', 'motor_controller', TRUE, '22kW VFD for spindle drive'),
+('CNC-MILL', 'Mazak VTC-800', 'INDL-SPD-4001', 'spindle_cartridge', TRUE, 'BT40 cartridge assembly'),
+('CNC-MILL', 'Mazak VTC-800', 'INDL-SPD-4003', 'spindle_drawbar', TRUE, 'Drawbar with disc springs'),
+('CNC-MILL', 'Mazak VTC-800', 'INDL-SPD-4005', 'spindle_seal', TRUE, 'Labyrinth seal kit'),
+('CNC-MILL', 'Mazak VTC-800', 'INDL-ELC-2002', 'contactor', TRUE, '65A contactor for 22kW motor'),
+('CNC-MILL', 'Mazak VTC-800', 'INDL-ELC-2003', 'overload_relay', TRUE, '15kW overload relay (nearest fit)'),
+('CNC-MILL', 'Mazak VTC-800', 'INDL-ELC-2008', 'encoder', TRUE, 'Spindle encoder 2048 PPR'),
+-- Alternative bearings for Mazak VTC-800
+('CNC-MILL', 'Mazak VTC-800', 'INDL-BRG-7420', 'spindle_bearing', FALSE, 'Angular contact alt — lower speed rating'),
+
+-- ═══════════════════════════════════════════════════════════════════
+-- CNC-MILL: Haas VF-4 (15kW spindle)
+-- ═══════════════════════════════════════════════════════════════════
+('CNC-MILL', 'Haas VF-4', 'INDL-BRG-7420', 'spindle_bearing', TRUE, 'Angular contact bearing set'),
+('CNC-MILL', 'Haas VF-4', 'INDL-MOT-5500', 'spindle_motor', TRUE, '15kW spindle motor'),
+('CNC-MILL', 'Haas VF-4', 'INDL-CTR-1100', 'motor_controller', TRUE, '15kW VFD'),
+('CNC-MILL', 'Haas VF-4', 'INDL-SPD-4001', 'spindle_cartridge', TRUE, 'BT40 cartridge assembly'),
+('CNC-MILL', 'Haas VF-4', 'INDL-SPD-4003', 'spindle_drawbar', TRUE, 'Drawbar with disc springs'),
+('CNC-MILL', 'Haas VF-4', 'INDL-SPD-4005', 'spindle_seal', TRUE, 'Labyrinth seal kit'),
+('CNC-MILL', 'Haas VF-4', 'INDL-ELC-2001', 'contactor', TRUE, '40A contactor for 15kW motor'),
+('CNC-MILL', 'Haas VF-4', 'INDL-ELC-2008', 'encoder', TRUE, 'Spindle encoder'),
+
+-- ═══════════════════════════════════════════════════════════════════
+-- CNC-LATHE: Okuma LB3000 (22kW spindle)
+-- ═══════════════════════════════════════════════════════════════════
+('CNC-LATHE', 'Okuma LB3000', 'INDL-BRG-7421', 'spindle_bearing', TRUE, 'Cylindrical roller bearing for heavy turning'),
+('CNC-LATHE', 'Okuma LB3000', 'INDL-MOT-5501', 'spindle_motor', TRUE, '22kW spindle motor'),
+('CNC-LATHE', 'Okuma LB3000', 'INDL-CTR-1101', 'motor_controller', TRUE, '22kW VFD'),
+('CNC-LATHE', 'Okuma LB3000', 'INDL-SPD-4001', 'spindle_cartridge', FALSE, 'BT40 cartridge (lathe adapter req)'),
+('CNC-LATHE', 'Okuma LB3000', 'INDL-SPD-4005', 'spindle_seal', TRUE, 'Labyrinth seal kit'),
+('CNC-LATHE', 'Okuma LB3000', 'INDL-ELC-2002', 'contactor', TRUE, '65A contactor for 22kW motor'),
+('CNC-LATHE', 'Okuma LB3000', 'INDL-ELC-2008', 'encoder', TRUE, 'Spindle encoder'),
+-- Alternative bearings for Okuma
+('CNC-LATHE', 'Okuma LB3000', 'INDL-BRG-7420', 'spindle_bearing', FALSE, 'Angular contact alt — lighter preload'),
+
+-- ═══════════════════════════════════════════════════════════════════
+-- CNC-LATHE: Mazak QT-250 (15kW spindle)
+-- ═══════════════════════════════════════════════════════════════════
+('CNC-LATHE', 'Mazak QT-250', 'INDL-BRG-7420', 'spindle_bearing', TRUE, 'Angular contact bearing set'),
+('CNC-LATHE', 'Mazak QT-250', 'INDL-MOT-5500', 'spindle_motor', TRUE, '15kW spindle motor'),
+('CNC-LATHE', 'Mazak QT-250', 'INDL-CTR-1100', 'motor_controller', TRUE, '15kW VFD'),
+('CNC-LATHE', 'Mazak QT-250', 'INDL-SPD-4005', 'spindle_seal', TRUE, 'Labyrinth seal kit'),
+('CNC-LATHE', 'Mazak QT-250', 'INDL-ELC-2001', 'contactor', TRUE, '40A contactor'),
+('CNC-LATHE', 'Mazak QT-250', 'INDL-ELC-2008', 'encoder', TRUE, 'Spindle encoder'),
+
+-- ═══════════════════════════════════════════════════════════════════
+-- CNC-5AX: DMG MORI DMU 80P (22kW spindle, HSK taper)
+-- ═══════════════════════════════════════════════════════════════════
+('CNC-5AX', 'DMG MORI DMU 80P', 'INDL-BRG-7420', 'spindle_bearing', TRUE, 'Angular contact bearings for HSK spindle'),
+('CNC-5AX', 'DMG MORI DMU 80P', 'INDL-MOT-5501', 'spindle_motor', TRUE, '22kW spindle motor'),
+('CNC-5AX', 'DMG MORI DMU 80P', 'INDL-CTR-1101', 'motor_controller', TRUE, '22kW VFD'),
+('CNC-5AX', 'DMG MORI DMU 80P', 'INDL-SPD-4002', 'spindle_cartridge', TRUE, 'HSK63 cartridge with ceramic bearings'),
+('CNC-5AX', 'DMG MORI DMU 80P', 'INDL-SPD-4003', 'spindle_drawbar', TRUE, 'Drawbar assembly'),
+('CNC-5AX', 'DMG MORI DMU 80P', 'INDL-SPD-4005', 'spindle_seal', TRUE, 'Labyrinth seal kit'),
+('CNC-5AX', 'DMG MORI DMU 80P', 'INDL-ELC-2002', 'contactor', TRUE, '65A contactor'),
+('CNC-5AX', 'DMG MORI DMU 80P', 'INDL-ELC-2008', 'encoder', TRUE, 'Spindle encoder'),
+
+-- ═══════════════════════════════════════════════════════════════════
+-- CNC-5AX: Makino D500 (30kW spindle, HSK taper)
+-- ═══════════════════════════════════════════════════════════════════
+('CNC-5AX', 'Makino D500', 'INDL-BRG-7421', 'spindle_bearing', TRUE, 'Cylindrical roller for high-power spindle'),
+('CNC-5AX', 'Makino D500', 'INDL-MOT-5502', 'spindle_motor', TRUE, '30kW heavy cutting spindle motor'),
+('CNC-5AX', 'Makino D500', 'INDL-CTR-1102', 'motor_controller', TRUE, '30kW VFD with regen braking'),
+('CNC-5AX', 'Makino D500', 'INDL-SPD-4002', 'spindle_cartridge', TRUE, 'HSK63 cartridge'),
+('CNC-5AX', 'Makino D500', 'INDL-SPD-4003', 'spindle_drawbar', TRUE, 'Drawbar assembly'),
+('CNC-5AX', 'Makino D500', 'INDL-SPD-4005', 'spindle_seal', TRUE, 'Labyrinth seal kit'),
+('CNC-5AX', 'Makino D500', 'INDL-ELC-2002', 'contactor', TRUE, '65A contactor for 30kW motor'),
+('CNC-5AX', 'Makino D500', 'INDL-ELC-2007', 'braking_resistor', TRUE, 'Spindle braking resistor'),
+('CNC-5AX', 'Makino D500', 'INDL-ELC-2008', 'encoder', TRUE, 'Spindle encoder'),
+
+-- ═══════════════════════════════════════════════════════════════════
+-- Common parts across ALL CNC types (no model filter)
+-- ═══════════════════════════════════════════════════════════════════
+-- Ball screw bearings
+('CNC-MILL', NULL, 'INDL-BRG-7422', 'ball_screw_bearing', TRUE, 'Fixed side ball screw bearing'),
+('CNC-MILL', NULL, 'INDL-BRG-7423', 'ball_screw_bearing', TRUE, 'Float side ball screw bearing'),
+('CNC-LATHE', NULL, 'INDL-BRG-7422', 'ball_screw_bearing', TRUE, 'Fixed side ball screw bearing'),
+('CNC-LATHE', NULL, 'INDL-BRG-7423', 'ball_screw_bearing', TRUE, 'Float side ball screw bearing'),
+('CNC-5AX', NULL, 'INDL-BRG-7422', 'ball_screw_bearing', TRUE, 'Fixed side ball screw bearing'),
+('CNC-5AX', NULL, 'INDL-BRG-7423', 'ball_screw_bearing', TRUE, 'Float side ball screw bearing'),
+-- Coolant systems (universal across CNC types)
+('CNC-MILL', NULL, 'INDL-CLT-3001', 'coolant_pump', TRUE, 'Standard coolant pump'),
+('CNC-MILL', NULL, 'INDL-CLT-3002', 'coolant_pump_hp', TRUE, 'High-pressure through-spindle coolant'),
+('CNC-MILL', NULL, 'INDL-CLT-3004', 'coolant_filter', TRUE, 'Paper band filter'),
+('CNC-MILL', NULL, 'INDL-CLT-3006', 'coolant_chiller', TRUE, 'Coolant chiller unit'),
+('CNC-MILL', NULL, 'INDL-CLT-3008', 'coolant_sensor', TRUE, 'Coolant pressure sensor'),
+('CNC-MILL', NULL, 'INDL-CLT-3009', 'coolant_sensor', TRUE, 'Coolant flow switch'),
+('CNC-LATHE', NULL, 'INDL-CLT-3001', 'coolant_pump', TRUE, 'Standard coolant pump'),
+('CNC-LATHE', NULL, 'INDL-CLT-3004', 'coolant_filter', TRUE, 'Paper band filter'),
+('CNC-LATHE', NULL, 'INDL-CLT-3006', 'coolant_chiller', TRUE, 'Coolant chiller unit'),
+('CNC-LATHE', NULL, 'INDL-CLT-3008', 'coolant_sensor', TRUE, 'Coolant pressure sensor'),
+('CNC-5AX', NULL, 'INDL-CLT-3001', 'coolant_pump', TRUE, 'Standard coolant pump'),
+('CNC-5AX', NULL, 'INDL-CLT-3002', 'coolant_pump_hp', TRUE, 'High-pressure through-spindle coolant'),
+('CNC-5AX', NULL, 'INDL-CLT-3004', 'coolant_filter', TRUE, 'Paper band filter'),
+('CNC-5AX', NULL, 'INDL-CLT-3006', 'coolant_chiller', TRUE, 'Coolant chiller unit'),
+('CNC-5AX', NULL, 'INDL-CLT-3008', 'coolant_sensor', TRUE, 'Coolant pressure sensor'),
+-- Electrical protection (universal)
+('CNC-MILL', NULL, 'INDL-ELC-2004', 'circuit_breaker', TRUE, 'Motor protection breaker'),
+('CNC-MILL', NULL, 'INDL-ELC-2005', 'surge_protector', TRUE, 'Cabinet surge protector'),
+('CNC-MILL', NULL, 'INDL-ELC-2006', 'emc_filter', TRUE, 'EMC filter for VFD'),
+('CNC-MILL', NULL, 'INDL-CTR-1130', 'power_supply', TRUE, '24V PSU for controls'),
+('CNC-LATHE', NULL, 'INDL-ELC-2004', 'circuit_breaker', TRUE, 'Motor protection breaker'),
+('CNC-LATHE', NULL, 'INDL-ELC-2005', 'surge_protector', TRUE, 'Cabinet surge protector'),
+('CNC-LATHE', NULL, 'INDL-ELC-2006', 'emc_filter', TRUE, 'EMC filter for VFD'),
+('CNC-LATHE', NULL, 'INDL-CTR-1130', 'power_supply', TRUE, '24V PSU for controls'),
+('CNC-5AX', NULL, 'INDL-ELC-2004', 'circuit_breaker', TRUE, 'Motor protection breaker'),
+('CNC-5AX', NULL, 'INDL-ELC-2005', 'surge_protector', TRUE, 'Cabinet surge protector'),
+('CNC-5AX', NULL, 'INDL-ELC-2006', 'emc_filter', TRUE, 'EMC filter for VFD'),
+('CNC-5AX', NULL, 'INDL-CTR-1130', 'power_supply', TRUE, '24V PSU for controls'),
+-- Servo motors (universal per axis)
+('CNC-MILL', NULL, 'INDL-MOT-5510', 'servo_motor_x', TRUE, 'X-axis servo 5kW'),
+('CNC-MILL', NULL, 'INDL-MOT-5511', 'servo_motor_y', TRUE, 'Y-axis servo 7.5kW'),
+('CNC-MILL', NULL, 'INDL-MOT-5512', 'servo_motor_z', TRUE, 'Z-axis servo 10kW'),
+('CNC-MILL', NULL, 'INDL-CTR-1110', 'servo_amplifier', TRUE, 'Single axis servo amp'),
+('CNC-LATHE', NULL, 'INDL-MOT-5510', 'servo_motor_x', TRUE, 'X-axis servo'),
+('CNC-LATHE', NULL, 'INDL-MOT-5512', 'servo_motor_z', TRUE, 'Z-axis servo'),
+('CNC-LATHE', NULL, 'INDL-CTR-1110', 'servo_amplifier', TRUE, 'Single axis servo amp'),
+('CNC-5AX', NULL, 'INDL-MOT-5510', 'servo_motor_x', TRUE, 'X-axis servo'),
+('CNC-5AX', NULL, 'INDL-MOT-5511', 'servo_motor_y', TRUE, 'Y-axis servo'),
+('CNC-5AX', NULL, 'INDL-MOT-5512', 'servo_motor_z', TRUE, 'Z-axis servo'),
+('CNC-5AX', NULL, 'INDL-CTR-1111', 'servo_amplifier', TRUE, 'Dual axis servo amp');
