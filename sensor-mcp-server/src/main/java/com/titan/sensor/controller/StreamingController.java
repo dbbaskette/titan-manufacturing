@@ -135,7 +135,7 @@ public class StreamingController {
         }
 
         sql.append(" ORDER BY equipment_id, sensor_type, time DESC");
-        sql.append(" LIMIT 100");
+        sql.append(" LIMIT 500");
 
         return jdbcTemplate.query(sql.toString(),
             (rs, rowNum) -> new SensorReading(

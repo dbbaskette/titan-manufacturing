@@ -2,7 +2,7 @@
 // TITAN MANUFACTURING 5.0 — Order Fulfillment Tracker
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Package,
   Search,
@@ -10,114 +10,22 @@ import {
   CheckCircle,
   Truck,
   ArrowUpRight,
+  RefreshCw,
+  FileText,
+  Calendar,
+  AlertCircle,
+  User,
+  CreditCard,
 } from 'lucide-react';
-
-interface Order {
-  id: string;
-  customer: string;
-  status: 'pending' | 'validated' | 'processing' | 'shipped' | 'delivered';
-  priority: 'standard' | 'expedite' | 'critical';
-  items: number;
-  total: number;
-  orderDate: string;
-  expectedDelivery: string;
-  shipments?: Shipment[];
-}
-
-interface Shipment {
-  id: string;
-  carrier: string;
-  status: 'preparing' | 'in_transit' | 'delivered';
-  tracking: string;
-  origin: string;
-  destination: string;
-}
-
-const MOCK_ORDERS: Order[] = [
-  {
-    id: 'TM-2024-45892',
-    customer: 'Boeing Commercial',
-    status: 'processing',
-    priority: 'critical',
-    items: 500,
-    total: 1225000,
-    orderDate: '2024-01-20',
-    expectedDelivery: '2024-01-27',
-    shipments: [
-      {
-        id: 'SHIP-2024-001',
-        carrier: 'FedEx Express',
-        status: 'preparing',
-        tracking: 'FX789456123',
-        origin: 'Phoenix, AZ',
-        destination: 'Seattle, WA',
-      },
-      {
-        id: 'SHIP-2024-002',
-        carrier: 'DHL Aviation',
-        status: 'preparing',
-        tracking: 'DHL456789012',
-        origin: 'Munich, DE',
-        destination: 'Seattle, WA',
-      },
-    ],
-  },
-  {
-    id: 'TM-2024-45891',
-    customer: 'Airbus Industries',
-    status: 'shipped',
-    priority: 'expedite',
-    items: 250,
-    total: 612500,
-    orderDate: '2024-01-18',
-    expectedDelivery: '2024-01-25',
-    shipments: [
-      {
-        id: 'SHIP-2024-003',
-        carrier: 'Maersk Ocean',
-        status: 'in_transit',
-        tracking: 'MAEU7654321',
-        origin: 'Shanghai, CN',
-        destination: 'Hamburg, DE',
-      },
-    ],
-  },
-  {
-    id: 'TM-2024-45890',
-    customer: 'Tesla Motors',
-    status: 'validated',
-    priority: 'standard',
-    items: 1000,
-    total: 450000,
-    orderDate: '2024-01-19',
-    expectedDelivery: '2024-02-02',
-  },
-  {
-    id: 'TM-2024-45889',
-    customer: 'GE Renewable',
-    status: 'delivered',
-    priority: 'standard',
-    items: 150,
-    total: 275000,
-    orderDate: '2024-01-10',
-    expectedDelivery: '2024-01-17',
-  },
-  {
-    id: 'TM-2024-45888',
-    customer: 'Caterpillar Inc.',
-    status: 'pending',
-    priority: 'standard',
-    items: 75,
-    total: 125000,
-    orderDate: '2024-01-21',
-    expectedDelivery: '2024-02-04',
-  },
-];
+import { titanApi, type OrderSummary, type OrderDetails, type OrderCounts } from '../api/titanApi';
 
 const STATUS_CONFIG = {
   pending: { label: 'Pending', color: 'text-slate', bg: 'bg-slate/20', icon: Clock },
   validated: { label: 'Validated', color: 'text-info', bg: 'bg-info/20', icon: CheckCircle },
   processing: { label: 'Processing', color: 'text-warning', bg: 'bg-warning/20', icon: Package },
+  in_progress: { label: 'Processing', color: 'text-warning', bg: 'bg-warning/20', icon: Package },
+  confirmed: { label: 'Confirmed', color: 'text-info', bg: 'bg-info/20', icon: CheckCircle },
+  expedite: { label: 'Expedite', color: 'text-ember', bg: 'bg-ember/20', icon: Truck },
   shipped: { label: 'Shipped', color: 'text-ember', bg: 'bg-ember/20', icon: Truck },
   delivered: { label: 'Delivered', color: 'text-healthy', bg: 'bg-healthy/20', icon: CheckCircle },
 };
@@ -128,25 +36,94 @@ const PRIORITY_CONFIG = {
   critical: { label: 'Critical', color: 'text-critical border-critical/30' },
 };
 
-export function OrderTracker() {
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedOrder, setSelectedOrder] = useState<Order | null>(MOCK_ORDERS[0]);
-  const [statusFilter, setStatusFilter] = useState<string>('all');
+const EVENT_ICONS: Record<string, React.ElementType> = {
+  CREATED: FileText,
+  VALIDATED: CheckCircle,
+  STATUS_CHANGED: RefreshCw,
+  FULFILLMENT_INITIATED: Package,
+  SHIPPED: Truck,
+  DELIVERED: CheckCircle,
+};
 
-  const filteredOrders = MOCK_ORDERS.filter((order) => {
+export function OrderTracker() {
+  const [orders, setOrders] = useState<OrderSummary[]>([]);
+  const [counts, setCounts] = useState<OrderCounts | null>(null);
+  const [selectedOrderDetails, setSelectedOrderDetails] = useState<OrderDetails | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchOrders = useCallback(async () => {
+    try {
+      const [ordersData, countsData] = await Promise.all([
+        titanApi.getOrders(),
+        titanApi.getOrderCounts(),
+      ]);
+      setOrders(ordersData);
+      setCounts(countsData);
+      setError(null);
+
+      // Auto-select first order if none selected
+      if (ordersData.length > 0 && !selectedOrderDetails) {
+        const details = await titanApi.getOrderDetails(ordersData[0].order_id);
+        setSelectedOrderDetails(details);
+      }
+    } catch (e) {
+      setError('Failed to fetch orders');
+      console.error('Order fetch error:', e);
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedOrderDetails]);
+
+  useEffect(() => {
+    fetchOrders();
+    const interval = setInterval(fetchOrders, 30000); // Refresh every 30s
+    return () => clearInterval(interval);
+  }, [fetchOrders]);
+
+  const handleSelectOrder = async (orderId: string) => {
+    try {
+      const details = await titanApi.getOrderDetails(orderId);
+      setSelectedOrderDetails(details);
+    } catch (e) {
+      console.error('Failed to fetch order details:', e);
+    }
+  };
+
+  const normalizeStatus = (status: string): string => {
+    const s = status.toLowerCase();
+    if (s === 'in_progress' || s === 'confirmed') return 'processing';
+    if (s === 'expedite') return 'processing';
+    return s;
+  };
+
+  const filteredOrders = orders.filter((order) => {
     const matchesSearch =
-      order.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      order.customer.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesStatus = statusFilter === 'all' || order.status === statusFilter;
+      order.order_id.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      order.customer_name.toLowerCase().includes(searchQuery.toLowerCase());
+    const normalized = normalizeStatus(order.status);
+    const matchesStatus = statusFilter === 'all' || normalized === statusFilter;
     return matchesSearch && matchesStatus;
   });
 
-  const statusCounts = {
-    pending: MOCK_ORDERS.filter((o) => o.status === 'pending').length,
-    processing: MOCK_ORDERS.filter((o) => o.status === 'processing' || o.status === 'validated').length,
-    shipped: MOCK_ORDERS.filter((o) => o.status === 'shipped').length,
-    delivered: MOCK_ORDERS.filter((o) => o.status === 'delivered').length,
+  const statusCounts = counts?.counts || {
+    pending: 0,
+    validated: 0,
+    processing: 0,
+    shipped: 0,
+    delivered: 0,
   };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <RefreshCw className="animate-spin text-ember mr-2" size={24} />
+        <span className="text-slate">Loading orders...</span>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 fade-in">
@@ -159,6 +136,12 @@ export function OrderTracker() {
           </h2>
           <p className="text-slate mt-1">B2B order processing and shipment tracking</p>
         </div>
+        {error && (
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-critical/20 rounded text-critical text-sm">
+            <AlertCircle size={14} />
+            {error}
+          </div>
+        )}
       </div>
 
       {/* Pipeline Summary */}
@@ -233,33 +216,34 @@ export function OrderTracker() {
           {/* List */}
           <div className="max-h-[500px] overflow-y-auto">
             {filteredOrders.map((order) => {
-              const config = STATUS_CONFIG[order.status];
-              const priorityConfig = PRIORITY_CONFIG[order.priority];
+              const normalizedStatus = normalizeStatus(order.status);
+              const config = STATUS_CONFIG[normalizedStatus as keyof typeof STATUS_CONFIG] || STATUS_CONFIG.pending;
+              const priorityConfig = PRIORITY_CONFIG[(order.priority?.toLowerCase() || 'standard') as keyof typeof PRIORITY_CONFIG] || PRIORITY_CONFIG.standard;
 
               return (
                 <div
-                  key={order.id}
-                  onClick={() => setSelectedOrder(order)}
+                  key={order.order_id}
+                  onClick={() => handleSelectOrder(order.order_id)}
                   className={`p-4 border-b border-iron cursor-pointer transition-all hover:bg-steel ${
-                    selectedOrder?.id === order.id ? 'bg-steel border-l-2 border-l-ember' : ''
+                    selectedOrderDetails?.order_id === order.order_id ? 'bg-steel border-l-2 border-l-ember' : ''
                   }`}
                 >
                   <div className="flex items-center justify-between mb-2">
-                    <span className="font-mono text-sm text-white">{order.id}</span>
+                    <span className="font-mono text-sm text-white">{order.order_id}</span>
                     <span
                       className={`px-2 py-0.5 rounded text-[10px] uppercase border ${priorityConfig.color}`}
                     >
                       {priorityConfig.label}
                     </span>
                   </div>
-                  <p className="text-xs text-slate mb-2">{order.customer}</p>
+                  <p className="text-xs text-slate mb-2">{order.customer_name}</p>
                   <div className="flex items-center justify-between">
                     <span className={`flex items-center gap-1.5 text-xs ${config.color}`}>
                       <config.icon size={12} />
                       {config.label}
                     </span>
                     <span className="text-xs text-ash font-mono">
-                      ${(order.total / 1000).toFixed(0)}K
+                      ${((order.total_amount || 0) / 1000).toFixed(0)}K
                     </span>
                   </div>
                 </div>
@@ -270,7 +254,7 @@ export function OrderTracker() {
 
         {/* Order Details */}
         <div className="col-span-2 space-y-4">
-          {selectedOrder ? (
+          {selectedOrderDetails ? (
             <>
               {/* Header Card */}
               <div className="panel p-6">
@@ -278,70 +262,195 @@ export function OrderTracker() {
                   <div>
                     <div className="flex items-center gap-3 mb-2">
                       <h3 className="font-display text-xl font-bold text-white">
-                        {selectedOrder.id}
+                        {selectedOrderDetails.order_id}
                       </h3>
                       <span
                         className={`px-2 py-0.5 rounded text-xs uppercase border ${
-                          PRIORITY_CONFIG[selectedOrder.priority].color
+                          PRIORITY_CONFIG[(selectedOrderDetails.priority?.toLowerCase() || 'standard') as keyof typeof PRIORITY_CONFIG]?.color || PRIORITY_CONFIG.standard.color
                         }`}
                       >
-                        {selectedOrder.priority}
+                        {selectedOrderDetails.priority || 'Standard'}
                       </span>
                     </div>
-                    <p className="text-slate">{selectedOrder.customer}</p>
+                    <p className="text-slate">{selectedOrderDetails.customer_name}</p>
+                    <p className="text-xs text-ash mt-1">{selectedOrderDetails.tier} customer</p>
                   </div>
-                  <StatusBadge status={selectedOrder.status} />
+                  <StatusBadge status={selectedOrderDetails.status} />
                 </div>
 
                 {/* Order Timeline */}
                 <div className="mt-6">
-                  <OrderTimeline status={selectedOrder.status} />
+                  <OrderTimeline status={normalizeStatus(selectedOrderDetails.status)} />
                 </div>
               </div>
 
-              {/* Order Info */}
-              <div className="grid grid-cols-4 gap-4">
-                <InfoCard label="Items" value={selectedOrder.items.toString()} />
-                <InfoCard
-                  label="Total Value"
-                  value={`$${(selectedOrder.total / 1000).toFixed(0)}K`}
-                />
-                <InfoCard label="Order Date" value={selectedOrder.orderDate} />
-                <InfoCard label="Expected Delivery" value={selectedOrder.expectedDelivery} />
+              {/* Order Info + Contract */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="panel p-4">
+                  <div className="flex items-center gap-2 text-xs text-ash uppercase tracking-wider mb-3">
+                    <Calendar size={12} />
+                    Order Details
+                  </div>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-slate">Order Date</span>
+                      <span className="text-white font-mono">{formatDate(selectedOrderDetails.order_date)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate">Required Date</span>
+                      <span className="text-white font-mono">{formatDate(selectedOrderDetails.required_date)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate">Line Items</span>
+                      <span className="text-white">{selectedOrderDetails.lines?.length || 0}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate">Total Value</span>
+                      <span className="text-white font-mono">${((selectedOrderDetails.total_amount || 0) / 1000).toFixed(0)}K</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Customer Contract */}
+                <div className="panel p-4">
+                  <div className="flex items-center gap-2 text-xs text-ash uppercase tracking-wider mb-3">
+                    <CreditCard size={12} />
+                    Contract Terms
+                  </div>
+                  {selectedOrderDetails.contract && (
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-slate">Type</span>
+                        <span className={`${selectedOrderDetails.contract.contract_type === 'STRATEGIC' ? 'text-ember' : selectedOrderDetails.contract.contract_type === 'PREMIUM' ? 'text-warning' : 'text-white'}`}>
+                          {selectedOrderDetails.contract.contract_type}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate">Priority Level</span>
+                        <span className="text-white">{selectedOrderDetails.contract.priority_level}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate">Discount</span>
+                        <span className="text-healthy">{selectedOrderDetails.contract.discount_percent}%</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate">Payment Terms</span>
+                        <span className="text-white">Net {selectedOrderDetails.contract.payment_terms}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
 
+              {/* Order Lines */}
+              {selectedOrderDetails.lines && selectedOrderDetails.lines.length > 0 && (
+                <div className="panel">
+                  <div className="panel-header">
+                    <Package size={16} />
+                    Order Lines
+                  </div>
+                  <div className="divide-y divide-iron">
+                    {selectedOrderDetails.lines.map((line) => (
+                      <div key={line.line_id} className="p-4 flex items-center justify-between">
+                        <div>
+                          <div className="text-sm text-white">{line.product_name}</div>
+                          <div className="text-xs text-ash font-mono">{line.sku}</div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-sm text-white">
+                            {line.qty_shipped}/{line.quantity} shipped
+                          </div>
+                          <div className="text-xs text-ash font-mono">
+                            ${line.unit_price?.toFixed(2)} × {line.quantity}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Order Events Timeline */}
+              {selectedOrderDetails.events && selectedOrderDetails.events.length > 0 && (
+                <div className="panel">
+                  <div className="panel-header">
+                    <Clock size={16} />
+                    Event Timeline
+                  </div>
+                  <div className="p-4">
+                    <div className="relative">
+                      {/* Timeline line */}
+                      <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-iron" />
+
+                      {selectedOrderDetails.events.map((event, idx) => {
+                        const EventIcon = EVENT_ICONS[event.event_type] || FileText;
+                        return (
+                          <div key={event.event_id || idx} className="relative pl-10 pb-4 last:pb-0">
+                            {/* Timeline dot */}
+                            <div className="absolute left-2.5 w-3 h-3 rounded-full bg-steel border-2 border-ember" />
+
+                            <div className="flex items-start justify-between">
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <EventIcon size={14} className="text-ember" />
+                                  <span className="text-sm text-white font-medium">
+                                    {event.event_type.replace(/_/g, ' ')}
+                                  </span>
+                                </div>
+                                {event.notes && (
+                                  <p className="text-xs text-slate mt-1">{event.notes}</p>
+                                )}
+                              </div>
+                              <div className="text-xs text-ash font-mono">
+                                {formatDateTime(event.event_timestamp)}
+                              </div>
+                            </div>
+                            {event.created_by && (
+                              <div className="flex items-center gap-1 text-[10px] text-ash mt-1">
+                                <User size={10} />
+                                {event.created_by}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Shipments */}
-              {selectedOrder.shipments && selectedOrder.shipments.length > 0 && (
+              {selectedOrderDetails.shipments && selectedOrderDetails.shipments.length > 0 && (
                 <div className="panel">
                   <div className="panel-header">
                     <Truck size={16} />
                     Shipments
                   </div>
                   <div className="divide-y divide-iron">
-                    {selectedOrder.shipments.map((shipment) => (
-                      <div key={shipment.id} className="p-4">
+                    {selectedOrderDetails.shipments.map((shipment) => (
+                      <div key={shipment.shipment_id} className="p-4">
                         <div className="flex items-center justify-between mb-3">
                           <div className="flex items-center gap-3">
-                            <span className="font-mono text-sm text-white">{shipment.id}</span>
+                            <span className="font-mono text-sm text-white">{shipment.shipment_id}</span>
                             <span className="px-2 py-0.5 bg-steel rounded text-xs text-slate">
-                              {shipment.carrier}
+                              {shipment.carrier_name}
                             </span>
                           </div>
-                          <ShipmentStatus status={shipment.status} />
+                          <ShipmentStatusBadge status={shipment.status} />
                         </div>
                         <div className="flex items-center gap-4 text-sm">
                           <div className="flex items-center gap-2">
                             <div className="w-2 h-2 rounded-full bg-ember" />
-                            <span className="text-slate">{shipment.origin}</span>
+                            <span className="text-slate">{shipment.origin_facility}</span>
                           </div>
                           <ArrowUpRight size={14} className="text-iron" />
                           <div className="flex items-center gap-2">
                             <div className="w-2 h-2 rounded-full bg-healthy" />
-                            <span className="text-slate">{shipment.destination}</span>
+                            <span className="text-slate">Destination</span>
                           </div>
                         </div>
                         <div className="mt-2 text-xs text-ash font-mono">
-                          Tracking: {shipment.tracking}
+                          Tracking: {shipment.tracking_number || 'Pending'}
                         </div>
                       </div>
                     ))}
@@ -359,6 +468,31 @@ export function OrderTracker() {
       </div>
     </div>
   );
+}
+
+function formatDate(dateStr: string | null): string {
+  if (!dateStr) return '-';
+  try {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch {
+    return dateStr;
+  }
+}
+
+function formatDateTime(dateStr: string | null): string {
+  if (!dateStr) return '-';
+  try {
+    const date = new Date(dateStr);
+    return date.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  } catch {
+    return dateStr;
+  }
 }
 
 function PipelineCard({
@@ -398,7 +532,8 @@ function PipelineCard({
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const config = STATUS_CONFIG[status as keyof typeof STATUS_CONFIG];
+  const normalizedStatus = status.toLowerCase();
+  const config = STATUS_CONFIG[normalizedStatus as keyof typeof STATUS_CONFIG] || STATUS_CONFIG.pending;
   const Icon = config.icon;
 
   return (
@@ -410,13 +545,13 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function OrderTimeline({ status }: { status: string }) {
-  const steps = ['pending', 'validated', 'processing', 'shipped', 'delivered'];
+  const steps = ['pending', 'processing', 'shipped', 'delivered'];
   const currentIndex = steps.indexOf(status);
 
   return (
     <div className="flex items-center justify-between">
       {steps.map((step, i) => {
-        const config = STATUS_CONFIG[step as keyof typeof STATUS_CONFIG];
+        const config = STATUS_CONFIG[step as keyof typeof STATUS_CONFIG] || STATUS_CONFIG.pending;
         const Icon = config.icon;
         const isComplete = i <= currentIndex;
         const isCurrent = i === currentIndex;
@@ -451,22 +586,14 @@ function OrderTimeline({ status }: { status: string }) {
   );
 }
 
-function ShipmentStatus({ status }: { status: string }) {
+function ShipmentStatusBadge({ status }: { status: string }) {
   const config: Record<string, { label: string; color: string }> = {
     preparing: { label: 'Preparing', color: 'text-warning bg-warning/20' },
+    pending: { label: 'Pending', color: 'text-slate bg-slate/20' },
     in_transit: { label: 'In Transit', color: 'text-ember bg-ember/20' },
     delivered: { label: 'Delivered', color: 'text-healthy bg-healthy/20' },
   };
 
-  const c = config[status];
+  const c = config[status?.toLowerCase()] || config.pending;
   return <span className={`px-2 py-1 rounded text-xs ${c.color}`}>{c.label}</span>;
-}
-
-function InfoCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="panel p-4">
-      <p className="text-xs text-ash uppercase tracking-wider mb-1">{label}</p>
-      <p className="font-display text-lg font-bold text-white">{value}</p>
-    </div>
-  );
 }

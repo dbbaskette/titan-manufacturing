@@ -9,6 +9,7 @@ import {
   GlobalOverview,
   SensorMonitor,
   EquipmentHealth,
+  Recommendations,
   OrderTracker,
   ChatInterface,
   DemoScenarios,
@@ -16,6 +17,7 @@ import {
   SimulationControl,
   MLPipeline,
 } from './components';
+import { SensorDataProvider } from './context/SensorDataContext';
 import type { Facility } from './types';
 
 function App() {
@@ -38,6 +40,8 @@ function App() {
         return <SensorMonitor />;
       case 'equipment':
         return <EquipmentHealth />;
+      case 'recommendations':
+        return <Recommendations />;
       case 'orders':
         return <OrderTracker />;
       case 'chat':
@@ -56,9 +60,11 @@ function App() {
   };
 
   return (
-    <Layout currentView={currentView} onViewChange={setCurrentView}>
-      {renderView()}
-    </Layout>
+    <SensorDataProvider>
+      <Layout currentView={currentView} onViewChange={setCurrentView}>
+        {renderView()}
+      </Layout>
+    </SensorDataProvider>
   );
 }
 

@@ -44,6 +44,7 @@ public class MqttConfig {
         options.setAutomaticReconnect(true);
         options.setConnectionTimeout(10);
         options.setKeepAliveInterval(60);
+        options.setMaxInflight(1000); // Support high-throughput sensor publishing
 
         try {
             client.connect(options);

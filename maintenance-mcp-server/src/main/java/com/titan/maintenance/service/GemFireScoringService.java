@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.apache.geode.cache.Region;
+import org.apache.geode.cache.execute.FunctionService;
+import org.apache.geode.cache.execute.ResultCollector;
 import org.eclipse.paho.client.mqttv3.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,12 +15,15 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import com.titan.maintenance.model.AnomalyEvent;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+
 
 /**
  * Real-time PMML scoring service.
@@ -30,21 +35,7 @@ public class GemFireScoringService implements MqttCallback {
 
     private static final Logger log = LoggerFactory.getLogger(GemFireScoringService.class);
 
-    // Model coefficients — loaded dynamically from Greenplum ml_model_coefficients
-    private volatile double intercept = -7.5;
-    private volatile double coeffVibrationNorm = 6.0;
-    private volatile double coeffTemperatureNorm = 3.5;
-    private volatile double coeffVibrationTrend = 0.5;
-    private volatile double coeffTemperatureTrend = 0.3;
-    private volatile double coeffDaysSinceMaint = 0.005;
-    private volatile double coeffEquipmentAge = 0.02;
-    private volatile double coeffAnomalyCount = 2.0;
-    private volatile double coeffPowerNorm = 0.0;
-    private volatile double coeffRpmNorm = 0.0;
-    private volatile double coeffPressureNorm = 0.0;
-    private volatile double coeffTorqueNorm = 0.0;
-
-    // Normalization thresholds (matching equipment_ml_features view)
+    // Normalization thresholds (matching equipment_ml_features view and PMML training data)
     private static final double VIBRATION_CRITICAL = 5.0;
     private static final double TEMPERATURE_CRITICAL = 85.0;
     private static final double POWER_MAX = 50.0;
@@ -52,12 +43,28 @@ public class GemFireScoringService implements MqttCallback {
     private static final double PRESSURE_MAX = 10.0;
     private static final double TORQUE_MAX = 80.0;
 
+    private static final String MODEL_ID = "failure_predictor_v1";
+
     // Sliding window: 3 minutes of readings
     private static final long WINDOW_MS = 3 * 60 * 1000;
 
     private final GemFireService gemFireService;
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
+    private final RabbitTemplate rabbitTemplate;
+
+    // Track published alerts to avoid duplicates (cleared when equipment recovers)
+    private final Set<String> publishedAlerts = ConcurrentHashMap.newKeySet();
+
+    // Consecutive scoring cycle failures — triggers GemFire reconnect after threshold
+    private int consecutiveScoringFailures = 0;
+    private static final int RECONNECT_THRESHOLD = 3;
+
+    // Per-equipment max anomaly level: "CRITICAL" (all), "HIGH" (HIGH only), "NONE" (disabled)
+    // Missing entries default to "CRITICAL" (publish all)
+    private final ConcurrentHashMap<String, String> equipmentAnomalyLevels = new ConcurrentHashMap<>();
+    private volatile String defaultAnomalyLevel = "CRITICAL";
+
 
     @Value("${mqtt.broker:tcp://localhost:1883}")
     private String mqttBroker;
@@ -74,6 +81,15 @@ public class GemFireScoringService implements MqttCallback {
     @Value("${mqtt.topic:titan/sensors/#}")
     private String mqttTopic;
 
+    @Value("${generator.url:http://sensor-data-generator:8090}")
+    private String generatorUrl;
+
+    @Value("${anomaly.critical-routing-key:anomaly.critical}")
+    private String criticalRoutingKey;
+
+    @Value("${anomaly.high-routing-key:anomaly.high}")
+    private String highRoutingKey;
+
     private MqttClient mqttClient;
 
     // equipmentId → list of timestamped readings
@@ -82,51 +98,44 @@ public class GemFireScoringService implements MqttCallback {
     // Cached equipment metadata from Greenplum (loaded once)
     private final Map<String, EquipmentMeta> equipmentMeta = new ConcurrentHashMap<>();
 
-    public GemFireScoringService(GemFireService gemFireService, JdbcTemplate jdbcTemplate) {
+    public GemFireScoringService(GemFireService gemFireService, JdbcTemplate jdbcTemplate, RabbitTemplate rabbitTemplate) {
         this.gemFireService = gemFireService;
         this.jdbcTemplate = jdbcTemplate;
+        this.rabbitTemplate = rabbitTemplate;
         this.objectMapper = new ObjectMapper();
         this.objectMapper.registerModule(new JavaTimeModule());
     }
 
-    @PostConstruct
-    public void start() {
-        loadCoefficients();
-        loadEquipmentMetadata();
-        connectMqtt();
+    public String getAnomalyLevel(String equipmentId) {
+        return equipmentAnomalyLevels.getOrDefault(equipmentId, defaultAnomalyLevel);
     }
 
-    /**
-     * Load model coefficients from Greenplum ml_model_coefficients table.
-     * Called at startup and can be called after retrain to pick up new values.
-     */
-    public void loadCoefficients() {
-        try {
-            List<Map<String, Object>> rows = jdbcTemplate.queryForList(
-                    "SELECT feature_name, coefficient FROM ml_model_coefficients WHERE model_id = 'failure_predictor_v1'");
-            for (Map<String, Object> row : rows) {
-                String feature = (String) row.get("feature_name");
-                double coeff = ((Number) row.get("coefficient")).doubleValue();
-                switch (feature) {
-                    case "intercept" -> intercept = coeff;
-                    case "vibration_normalized" -> coeffVibrationNorm = coeff;
-                    case "temperature_normalized" -> coeffTemperatureNorm = coeff;
-                    case "vibration_trend_rate" -> coeffVibrationTrend = coeff;
-                    case "temperature_trend_rate" -> coeffTemperatureTrend = coeff;
-                    case "days_since_maintenance" -> coeffDaysSinceMaint = coeff;
-                    case "equipment_age_years" -> coeffEquipmentAge = coeff;
-                    case "anomaly_count" -> coeffAnomalyCount = coeff;
-                    case "power_normalized" -> coeffPowerNorm = coeff;
-                    case "rpm_normalized" -> coeffRpmNorm = coeff;
-                    case "pressure_normalized" -> coeffPressureNorm = coeff;
-                    case "torque_normalized" -> coeffTorqueNorm = coeff;
-                }
-            }
-            log.info("Loaded {} coefficients from Greenplum (intercept={}, vibration_norm={})",
-                    rows.size(), intercept, coeffVibrationNorm);
-        } catch (Exception e) {
-            log.warn("Failed to load coefficients from Greenplum: {}. Using defaults.", e.getMessage());
+    public void setAnomalyLevel(String equipmentId, String level) {
+        if ("CRITICAL".equals(level)) {
+            equipmentAnomalyLevels.remove(equipmentId); // default is CRITICAL
+        } else {
+            equipmentAnomalyLevels.put(equipmentId, level);
         }
+        log.info("Anomaly level for {} set to: {}", equipmentId, level);
+    }
+
+    public String getDefaultAnomalyLevel() {
+        return defaultAnomalyLevel;
+    }
+
+    public void setDefaultAnomalyLevel(String level) {
+        defaultAnomalyLevel = level;
+        log.info("Default anomaly level set to: {}", level);
+    }
+
+    public Map<String, String> getAllAnomalyLevels() {
+        return new HashMap<>(equipmentAnomalyLevels);
+    }
+
+    @PostConstruct
+    public void start() {
+        loadEquipmentMetadata();
+        connectMqtt();
     }
 
     @PreDestroy
@@ -207,18 +216,50 @@ public class GemFireScoringService implements MqttCallback {
 
     // ── Scheduled Scoring ──────────────────────────────────────────────────
 
+    /**
+     * Sync degradation caps from the generator service.
+     * Maps generator degradationCap to scoring anomaly level:
+     *   UNLIMITED → CRITICAL, HIGH → HIGH, NONE → NONE
+     */
+    private void syncDegradationCaps() {
+        try {
+            String url = generatorUrl + "/api/generator/equipment";
+            String json = new org.springframework.web.client.RestTemplate().getForObject(url, String.class);
+            JsonNode equipmentList = objectMapper.readTree(json);
+            for (JsonNode eq : equipmentList) {
+                String id = eq.get("equipmentId").asText();
+                String cap = eq.has("degradationCap") ? eq.get("degradationCap").asText() : "UNLIMITED";
+                String level = "UNLIMITED".equals(cap) ? "CRITICAL" : cap;
+                equipmentAnomalyLevels.put(id, level);
+            }
+        } catch (Exception e) {
+            log.debug("Could not sync degradation caps from generator: {}", e.getMessage());
+        }
+    }
+
     @Scheduled(fixedDelay = 30000, initialDelay = 15000)
     public void scoreAllEquipment() {
+        syncDegradationCaps();
+
         if (!gemFireService.isConnected()) {
             log.debug("GemFire not connected, skipping scoring cycle");
+            handleScoringFailure();
             return;
         }
 
         long now = System.currentTimeMillis();
         long cutoff = now - WINDOW_MS;
         int scored = 0;
+        int failed = 0;
 
-        Region<String, String> predictionsRegion = gemFireService.getSensorPredictionsRegion();
+        Region<String, String> predictionsRegion;
+        try {
+            predictionsRegion = gemFireService.getSensorPredictionsRegion();
+        } catch (Exception e) {
+            log.warn("Cannot get GemFire predictions region: {}", e.getMessage());
+            handleScoringFailure();
+            return;
+        }
 
         for (Map.Entry<String, CopyOnWriteArrayList<SensorSnapshot>> entry : sensorWindows.entrySet()) {
             String equipmentId = entry.getKey();
@@ -233,13 +274,100 @@ public class GemFireScoringService implements MqttCallback {
                 String predictionJson = scoreEquipment(equipmentId, snapshots, now);
                 predictionsRegion.put(equipmentId, predictionJson);
                 scored++;
+
+                // Check for HIGH/CRITICAL and publish anomaly event
+                publishAnomalyIfNeeded(equipmentId, predictionJson);
             } catch (Exception e) {
+                failed++;
                 log.debug("Scoring failed for {}: {}", equipmentId, e.getMessage());
             }
         }
 
         if (scored > 0) {
+            consecutiveScoringFailures = 0; // Reset on any success
             log.info("GemFire scoring cycle: scored {} equipment", scored);
+        } else if (failed > 0) {
+            handleScoringFailure();
+        }
+    }
+
+    private void handleScoringFailure() {
+        consecutiveScoringFailures++;
+        if (consecutiveScoringFailures >= RECONNECT_THRESHOLD) {
+            log.warn("GemFire scoring failed {} consecutive cycles — forcing reconnect", consecutiveScoringFailures);
+            consecutiveScoringFailures = 0;
+            gemFireService.reconnect();
+        } else {
+            log.info("GemFire scoring cycle failed ({}/{}), will retry", consecutiveScoringFailures, RECONNECT_THRESHOLD);
+        }
+    }
+
+    /**
+     * Publish anomaly event to RabbitMQ if risk level is HIGH or CRITICAL.
+     * Uses deduplication to avoid publishing on every scoring cycle.
+     */
+    private void publishAnomalyIfNeeded(String equipmentId, String predictionJson) {
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> prediction = objectMapper.readValue(predictionJson, Map.class);
+            String riskLevel = (String) prediction.get("riskLevel");
+            double failureProbability = ((Number) prediction.get("failureProbability")).doubleValue();
+
+            // Check if anomaly publishing is gated by per-equipment level
+            String maxLevel = equipmentAnomalyLevels.getOrDefault(equipmentId, defaultAnomalyLevel);
+            if ("NONE".equals(maxLevel)) {
+                return; // All anomaly publishing disabled for this equipment
+            }
+            if ("HIGH".equals(maxLevel) && "CRITICAL".equals(riskLevel)) {
+                return; // Only HIGH allowed for this equipment, suppress CRITICAL
+            }
+
+            // Clear alerts if equipment has recovered
+            if ("LOW".equals(riskLevel) || "MEDIUM".equals(riskLevel)) {
+                boolean hadAlert = publishedAlerts.remove(equipmentId + ":CRITICAL") |
+                                   publishedAlerts.remove(equipmentId + ":HIGH");
+                if (hadAlert) {
+                    log.info("Equipment {} recovered to {} - cleared alert flags", equipmentId, riskLevel);
+                }
+                return;
+            }
+
+            // Publish if HIGH or CRITICAL and not already published
+            String alertKey = equipmentId + ":" + riskLevel;
+            if (publishedAlerts.add(alertKey)) {
+                String facilityId = equipmentId.substring(0, 3); // Extract facility from equipment ID
+                String probableCause = (String) prediction.getOrDefault("probableCause", "Unknown");
+                double vibrationAvg = ((Number) prediction.getOrDefault("vibrationAvg", 0.0)).doubleValue();
+                double temperatureAvg = ((Number) prediction.getOrDefault("temperatureAvg", 0.0)).doubleValue();
+                double powerAvg = ((Number) prediction.getOrDefault("powerAvg", 0.0)).doubleValue();
+                double rpmAvg = ((Number) prediction.getOrDefault("rpmAvg", 0.0)).doubleValue();
+                double pressureAvg = ((Number) prediction.getOrDefault("pressureAvg", 0.0)).doubleValue();
+                double torqueAvg = ((Number) prediction.getOrDefault("torqueAvg", 0.0)).doubleValue();
+                String scoredAt = (String) prediction.getOrDefault("scoredAt", Instant.now().toString());
+
+                AnomalyEvent event = AnomalyEvent.create(
+                    equipmentId,
+                    facilityId,
+                    riskLevel,
+                    failureProbability,
+                    probableCause,
+                    vibrationAvg,
+                    temperatureAvg,
+                    powerAvg,
+                    rpmAvg,
+                    pressureAvg,
+                    torqueAvg,
+                    scoredAt
+                );
+
+                String routingKey = "CRITICAL".equals(riskLevel) ? criticalRoutingKey : highRoutingKey;
+                rabbitTemplate.convertAndSend(routingKey, event);
+
+                log.info("Published {} anomaly event for {} ({}% failure probability)",
+                         riskLevel, equipmentId, Math.round(failureProbability * 100));
+            }
+        } catch (Exception e) {
+            log.warn("Failed to publish anomaly event for {}: {}", equipmentId, e.getMessage());
         }
     }
 
@@ -308,54 +436,66 @@ public class GemFireScoringService implements MqttCallback {
             }
         }
 
+        // When equipment is capped at HIGH, limit trend inputs so the model
+        // naturally scores in the HIGH band (50-69%) instead of CRITICAL.
+        // This caps the INPUT features, not the model output — the PMML model is unchanged.
+        String maxLevel = equipmentAnomalyLevels.getOrDefault(equipmentId, defaultAnomalyLevel);
+        if ("HIGH".equals(maxLevel)) {
+            double HIGH_TREND_CAP = 0.05;
+            vibrationTrendRate = Math.min(vibrationTrendRate, HIGH_TREND_CAP);
+            temperatureTrendRate = Math.min(temperatureTrendRate, HIGH_TREND_CAP);
+        }
+
         // Equipment metadata
         EquipmentMeta meta = equipmentMeta.getOrDefault(equipmentId, new EquipmentMeta(30, 2));
         int anomalyCount = 0; // default — could query periodically
 
-        // Logistic regression scoring
-        double logit = intercept
-                + coeffVibrationNorm * vibrationNormalized
-                + coeffTemperatureNorm * temperatureNormalized
-                + coeffVibrationTrend * vibrationTrendRate
-                + coeffTemperatureTrend * temperatureTrendRate
-                + coeffDaysSinceMaint * meta.daysSinceMaintenance
-                + coeffEquipmentAge * meta.equipmentAgeYears
-                + coeffAnomalyCount * anomalyCount
-                + coeffPowerNorm * (powerAvg / POWER_MAX)
-                + coeffRpmNorm * (rpmAvg / RPM_MAX)
-                + coeffPressureNorm * (pressureAvg / PRESSURE_MAX)
-                + coeffTorqueNorm * (torqueAvg / TORQUE_MAX);
+        // ── Score via GemFire PMML Function ──────────────────────────────
+        // Send normalized features to GemFire server-side PmmlScoringFunction.
+        // GemFire evaluates the PMML model (trained in Greenplum, exported as PMML,
+        // deployed to GemFire PmmlModels region) and returns probability + risk level.
+        String[] functionArgs = new String[] {
+            MODEL_ID,
+            equipmentId,
+            "vibration_normalized=" + vibrationNormalized,
+            "temperature_normalized=" + temperatureNormalized,
+            "vibration_trend_rate=" + vibrationTrendRate,
+            "temperature_trend_rate=" + temperatureTrendRate,
+            "days_since_maintenance=" + meta.daysSinceMaintenance,
+            "equipment_age_years=" + meta.equipmentAgeYears,
+            "anomaly_count=" + anomalyCount,
+            "power_normalized=" + (powerAvg / POWER_MAX),
+            "rpm_normalized=" + (rpmAvg / RPM_MAX),
+            "pressure_normalized=" + (pressureAvg / PRESSURE_MAX),
+            "torque_normalized=" + (torqueAvg / TORQUE_MAX)
+        };
 
-        double probability = 1.0 / (1.0 + Math.exp(-logit));
+        @SuppressWarnings("unchecked")
+        ResultCollector<String, List<String>> rc = (ResultCollector<String, List<String>>)
+            FunctionService.onRegion(gemFireService.getPmmlModelsRegion())
+                .setArguments(functionArgs)
+                .execute("PmmlScoringFunction");
 
-        String riskLevel;
-        if (probability >= 0.7) riskLevel = "CRITICAL";
-        else if (probability >= 0.5) riskLevel = "HIGH";
-        else if (probability >= 0.3) riskLevel = "MEDIUM";
-        else riskLevel = "LOW";
+        List<String> results = rc.getResult();
+        if (results == null || results.isEmpty()) {
+            throw new RuntimeException("No result from GemFire PmmlScoringFunction");
+        }
 
-        // ── Feature contribution analysis ─────────────────────────────────
-        // Each feature's contribution = coefficient × feature value.
-        // The sign and magnitude tell us what's driving the prediction.
-        double contribVibNorm = coeffVibrationNorm * vibrationNormalized;
-        double contribTempNorm = coeffTemperatureNorm * temperatureNormalized;
-        double contribVibTrend = coeffVibrationTrend * vibrationTrendRate;
-        double contribTempTrend = coeffTemperatureTrend * temperatureTrendRate;
-        double contribPower = coeffPowerNorm * (powerAvg / POWER_MAX);
-        double contribRpm = coeffRpmNorm * (rpmAvg / RPM_MAX);
-        double contribPressure = coeffPressureNorm * (pressureAvg / PRESSURE_MAX);
-        double contribTorque = coeffTorqueNorm * (torqueAvg / TORQUE_MAX);
+        String result = results.get(0);
+        if (result.startsWith("ERROR|")) {
+            throw new RuntimeException("GemFire PMML scoring error: " + result.substring(6));
+        }
 
-        // Identify primary and secondary drivers (only positive contributions matter)
-        Map<String, Double> drivers = new LinkedHashMap<>();
-        if (contribVibNorm > 0.5) drivers.put("vibration_level", contribVibNorm);
-        if (contribTempNorm > 0.5) drivers.put("temperature_level", contribTempNorm);
-        if (contribVibTrend > 0.5) drivers.put("vibration_trend", contribVibTrend);
-        if (contribTempTrend > 0.5) drivers.put("temperature_trend", contribTempTrend);
-        if (contribPower > 0.5) drivers.put("power_level", contribPower);
-        if (contribRpm > 0.5) drivers.put("rpm_level", contribRpm);
-        if (contribPressure > 0.5) drivers.put("pressure_level", contribPressure);
-        if (contribTorque > 0.5) drivers.put("torque_level", contribTorque);
+        // Parse "equipmentId|probability|riskLevel"
+        String[] parts = result.split("\\|", 3);
+        double probability = Double.parseDouble(parts[1]);
+        String riskLevel = parts[2];
+
+        // When equipment is capped at HIGH, clamp probability below CRITICAL threshold.
+        if ("HIGH".equals(maxLevel) && probability > 0.69) {
+            probability = 0.69;
+            riskLevel = "HIGH";
+        }
 
         // Map contribution pattern to probable failure cause using all 6 sensor types
         String probableCause = diagnoseProbableCause(
@@ -376,9 +516,9 @@ public class GemFireScoringService implements MqttCallback {
         prediction.put("torqueAvg", Math.round(torqueAvg * 100.0) / 100.0);
         prediction.put("vibrationTrend", Math.round(vibrationTrendRate * 1000.0) / 1000.0);
         prediction.put("temperatureTrend", Math.round(temperatureTrendRate * 1000.0) / 1000.0);
-        prediction.put("drivers", drivers);
         prediction.put("readingsInWindow", snapshots.size());
-        prediction.put("modelId", "failure_predictor_v1");
+        prediction.put("modelId", MODEL_ID);
+        prediction.put("scoringEngine", "GemFire PMML");
         prediction.put("scoredAt", Instant.ofEpochMilli(now).toString());
 
         return objectMapper.writeValueAsString(prediction);
@@ -451,7 +591,7 @@ public class GemFireScoringService implements MqttCallback {
                     "totalEquipment", predictions.size(),
                     "criticalCount", critical,
                     "predictions", predictions,
-                    "scoringSource", "GemFire SensorPredictions (PMML logistic regression)"
+                    "scoringSource", "GemFire PMML (server-side model evaluation via PmmlScoringFunction)"
             );
         } catch (Exception e) {
             log.error("Failed to retrieve GemFire predictions: {}", e.getMessage());
@@ -473,84 +613,128 @@ public class GemFireScoringService implements MqttCallback {
             double rpmAvg, double pressureAvg, double torqueAvg,
             double vibTrendRate, double tempTrendRate) {
 
-        // Deviation from normal baselines
+        // Heuristic diagnosis based on sensor deviations from baselines.
+        // Baselines: vib=2.0, temp=50, power=15, rpm=8500, pressure=6.0, torque=45
+        // Thresholds tuned for early detection with HIGH degradation caps.
+        boolean vibElevated = vibrationAvg > 2.3;
         boolean vibHigh = vibrationAvg > 3.0;
         boolean vibCritical = vibrationAvg > 4.0;
-        boolean tempHigh = temperatureAvg > 65.0;
+        boolean tempElevated = temperatureAvg > 52.5;  // +2.5°C from 50 baseline
+        boolean tempHigh = temperatureAvg > 58.0;
         boolean tempCritical = temperatureAvg > 80.0;
-        boolean powerHigh = powerAvg > 25.0;   // normal ~15 kW
+        boolean powerElevated = powerAvg > 16.0;       // +1 kW from 15 baseline
+        boolean powerHigh = powerAvg > 20.0;
         boolean powerSpike = powerAvg > 40.0;
-        boolean rpmLow = rpmAvg < 7500.0;      // normal ~8500
-        boolean pressureLow = pressureAvg < 4.5; // normal ~6.0
-        boolean torqueHigh = torqueAvg > 55.0;  // normal ~45
+        boolean rpmDegraded = rpmAvg < 8350.0;         // -150 from 8500 baseline
+        boolean rpmLow = rpmAvg < 7500.0;
+        boolean pressureLow = pressureAvg < 5.5;       // -0.5 from 6.0 baseline
+        boolean pressureCritical = pressureAvg < 4.5;
+        boolean torqueElevated = torqueAvg > 46.0;     // +1 from 45 baseline
+        boolean torqueHigh = torqueAvg > 50.0;
 
-        // MOTOR_BURNOUT: temperature is the dominant signal — check first to avoid
-        // misdiagnosis as electrical (motor burnout also raises power and vibration)
+        // ── MOTOR_BURNOUT: temperature dominant + power elevated ──
         if (tempCritical && powerHigh) {
             return "Motor burnout — temperature at " + String.format("%.0f", temperatureAvg)
-                    + "°C (critical) with elevated power draw (" + String.format("%.0f", powerAvg)
-                    + " kW), motor overheating under load";
+                    + "°C (critical) with power draw at " + String.format("%.1f", powerAvg) + " kW";
         }
-        if (tempCritical && tempTrendRate > 0.02) {
+        if (tempHigh && powerElevated && !pressureLow) {
+            return "Motor burnout — temperature at " + String.format("%.0f", temperatureAvg)
+                    + "°C with power draw at " + String.format("%.1f", powerAvg)
+                    + " kW, motor overheating under load";
+        }
+        if (tempElevated && powerElevated && tempTrendRate > 0.01 && !pressureLow) {
             return "Motor burnout risk — temperature at " + String.format("%.0f", temperatureAvg)
-                    + "°C rising rapidly, check motor windings and cooling";
+                    + "°C rising with elevated power (" + String.format("%.1f", powerAvg)
+                    + " kW), check motor windings";
         }
 
-        // COOLANT_FAILURE: temperature rises with pressure drop, vibration stays normal-ish
+        // ── COOLANT_FAILURE: temperature rises with pressure drop ──
         if (tempHigh && pressureLow) {
             return "Coolant system failure — temperature at " + String.format("%.0f", temperatureAvg)
-                    + "°C with coolant pressure dropped to " + String.format("%.1f", pressureAvg)
-                    + " bar (normal: 6.0 bar)";
+                    + "°C with coolant pressure at " + String.format("%.1f", pressureAvg) + " bar (normal: 6.0)";
+        }
+        if (tempElevated && pressureLow) {
+            return "Coolant system degradation — temperature at " + String.format("%.0f", temperatureAvg)
+                    + "°C with pressure dropping to " + String.format("%.1f", pressureAvg) + " bar";
         }
 
-        // ELECTRICAL_FAULT: power surge is the distinguishing signal, often with RPM drop
-        // Only matches when temperature is NOT critical (otherwise it's motor burnout)
-        if (powerSpike && vibHigh) {
-            return "Electrical fault — power draw at " + String.format("%.0f", powerAvg)
-                    + " kW (normal: 15 kW) with vibration at " + String.format("%.1f", vibrationAvg)
-                    + " mm/s, consistent with electrical resistance or winding degradation";
+        // ── ELECTRICAL_FAULT: power elevated + RPM drop, temperature not dominant ──
+        if (powerSpike && vibElevated) {
+            return "Electrical fault — power draw at " + String.format("%.1f", powerAvg)
+                    + " kW (normal: 15) with vibration at " + String.format("%.1f", vibrationAvg) + " mm/s";
         }
-        if (powerHigh && vibHigh && !tempCritical) {
-            return "Electrical fault — elevated power (" + String.format("%.0f", powerAvg)
-                    + " kW, normal: 15 kW) with vibration at " + String.format("%.1f", vibrationAvg)
-                    + " mm/s"
-                    + (rpmLow ? ", RPM degraded to " + String.format("%.0f", rpmAvg) : "")
+        if (powerElevated && rpmDegraded && !tempHigh) {
+            return "Electrical fault — power at " + String.format("%.1f", powerAvg)
+                    + " kW (normal: 15), RPM degraded to " + String.format("%.0f", rpmAvg)
                     + " — motor drawing excess current";
         }
+        if (powerHigh && vibElevated && !tempCritical) {
+            return "Electrical fault — elevated power (" + String.format("%.1f", powerAvg)
+                    + " kW) with vibration at " + String.format("%.1f", vibrationAvg) + " mm/s";
+        }
 
-        // SPINDLE_WEAR: RPM drops, torque increases, vibration rises slowly
+        // ── SPINDLE_WEAR: RPM drops + torque/vibration increase ──
         if (rpmLow && (vibHigh || torqueHigh)) {
-            return "Spindle wear — RPM degraded to " + String.format("%.0f", rpmAvg)
-                    + " (normal: 8500)"
-                    + (torqueHigh ? ", torque elevated at " + String.format("%.0f", torqueAvg) + " Nm" : "")
+            return "Spindle wear — RPM degraded to " + String.format("%.0f", rpmAvg) + " (normal: 8500)"
+                    + (torqueHigh ? ", torque at " + String.format("%.1f", torqueAvg) + " Nm" : "")
                     + (vibHigh ? ", vibration at " + String.format("%.1f", vibrationAvg) + " mm/s" : "");
         }
+        if (rpmDegraded && (vibElevated || torqueElevated)) {
+            return "Spindle wear — RPM at " + String.format("%.0f", rpmAvg) + " (normal: 8500)"
+                    + (torqueElevated ? ", torque at " + String.format("%.1f", torqueAvg) + " Nm" : "")
+                    + (vibElevated ? ", vibration at " + String.format("%.1f", vibrationAvg) + " mm/s" : "");
+        }
 
-        // BEARING_DEGRADATION: vibration dominant, other sensors mostly normal
+        // ── BEARING_DEGRADATION: vibration dominant, other sensors mostly normal ──
         if (vibCritical) {
-            if (vibTrendRate > 0.02) {
-                return "Bearing degradation — vibration at " + String.format("%.1f", vibrationAvg)
-                        + " mm/s with rising trend, consistent with bearing wear pattern";
-            }
-            return "Probable bearing wear — sustained high vibration at " + String.format("%.1f", vibrationAvg) + " mm/s";
+            return "Bearing degradation — vibration at " + String.format("%.1f", vibrationAvg)
+                    + " mm/s" + (vibTrendRate > 0.01 ? ", trending upward" : "") + ", bearing wear pattern";
         }
-        if (vibHigh && !powerHigh && !pressureLow) {
-            return "Early bearing wear — vibration elevated at " + String.format("%.1f", vibrationAvg)
-                    + " mm/s, monitor for progressive degradation";
+        if (vibHigh && !powerElevated && !pressureLow) {
+            return "Bearing wear — vibration elevated at " + String.format("%.1f", vibrationAvg) + " mm/s";
+        }
+        if (vibElevated && vibTrendRate > 0.01 && !powerElevated && !pressureLow && !rpmDegraded) {
+            return "Early bearing wear — vibration at " + String.format("%.1f", vibrationAvg)
+                    + " mm/s with upward trend, monitor for progressive degradation";
         }
 
-        // Early trends
-        if (vibTrendRate > 0.03 && tempTrendRate > 0.02) {
+        // ── Early trends (fallback) ──
+        if (vibTrendRate > 0.02 && tempTrendRate > 0.01) {
             return "Early-stage degradation — vibration and temperature trending upward";
         }
-        if (vibTrendRate > 0.03) {
+        if (vibTrendRate > 0.02) {
             return "Emerging vibration anomaly — upward trend, monitor for bearing or spindle wear";
         }
-        if (tempTrendRate > 0.03) {
+        if (tempTrendRate > 0.02) {
             return "Emerging thermal anomaly — temperature trending upward, check coolant and motor";
         }
 
-        return "Elevated sensor readings — multiple parameters outside normal range";
+        // Fallback: identify the most deviated sensor relative to its baseline
+        double vibDev = (vibrationAvg - 2.0) / 2.0;    // normalized deviation
+        double tempDev = (temperatureAvg - 50.0) / 50.0;
+        double powerDev = (powerAvg - 15.0) / 15.0;
+        double rpmDev = (8500.0 - rpmAvg) / 8500.0;    // inverted — lower is worse
+        double pressureDev = (6.0 - pressureAvg) / 6.0; // inverted
+        double torqueDev = (torqueAvg - 45.0) / 45.0;
+
+        // Find dominant deviation
+        String dominant = "vibration";
+        double maxDev = vibDev;
+        if (tempDev > maxDev) { maxDev = tempDev; dominant = "temperature"; }
+        if (powerDev > maxDev) { maxDev = powerDev; dominant = "power"; }
+        if (rpmDev > maxDev) { maxDev = rpmDev; dominant = "rpm"; }
+        if (pressureDev > maxDev) { maxDev = pressureDev; dominant = "pressure"; }
+        if (torqueDev > maxDev) { maxDev = torqueDev; dominant = "torque"; }
+
+        return switch (dominant) {
+            case "vibration" -> "Vibration anomaly at " + String.format("%.1f", vibrationAvg) + " mm/s — check bearings and mounting";
+            case "temperature" -> "Thermal anomaly at " + String.format("%.0f", temperatureAvg) + "°C — check cooling and motor";
+            case "power" -> "Power anomaly at " + String.format("%.1f", powerAvg) + " kW — check electrical system";
+            case "rpm" -> "RPM anomaly at " + String.format("%.0f", rpmAvg) + " — check spindle and drive";
+            case "pressure" -> "Pressure anomaly at " + String.format("%.1f", pressureAvg) + " bar — check coolant system";
+            case "torque" -> "Torque anomaly at " + String.format("%.1f", torqueAvg) + " Nm — check spindle load";
+            default -> "Multiple sensor anomalies detected";
+        };
     }
 
     /**

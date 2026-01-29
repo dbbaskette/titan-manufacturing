@@ -92,7 +92,7 @@ flowchart TB
     subgraph Data["Data Layer"]
         GP[(Greenplum<br/>pgvector + MADlib ML)]
         RMQ[RabbitMQ<br/>MQTT Plugin]
-        GF[GemFire<br/>PMML Scoring]
+        GF[GemFire<br/>PmmlScoringFunction<br/>+ JPMML Evaluator]
         OM[OpenMetadata<br/>Catalog]
     end
 
@@ -465,6 +465,10 @@ titan-manufacturing/
 ├── communications-mcp-server/   # Customer notifications (Port 8086)
 ├── governance-mcp-server/       # Compliance & lineage (Port 8087)
 │
+├── gemfire-scoring-function/     # GemFire server-side PMML scoring (deployed via gfsh)
+│   └── src/main/java/com/titan/gemfire/
+│       └── PmmlScoringFunction.java  # GemFire Function — evaluates PMML with JPMML
+│
 ├── sensor-data-generator/       # IoT sensor simulator (Port 8090)
 │
 ├── titan-dashboard/             # React UI (Port 3001)
@@ -500,7 +504,7 @@ titan-manufacturing/
 | **MCP Protocol** | Spring AI MCP 1.1.2 | Tool registration and invocation |
 | **LLM Integration** | Spring AI | OpenAI, Anthropic, Ollama support |
 | **Database** | Greenplum 7 + pgvector + MADlib | Analytics, vector embeddings, ML training |
-| **In-Memory Cache** | Apache Geode (GemFire) | Real-time PMML model scoring |
+| **In-Memory Scoring** | VMware Tanzu GemFire 10.2 + JPMML 1.6 | Server-side PMML model evaluation via GemFire Functions |
 | **Messaging** | RabbitMQ (MQTT plugin) | IoT sensor data ingestion |
 | **Data Catalog** | OpenMetadata 1.3 | Governance & lineage |
 | **Runtime** | Java 21 + Spring Boot 3.4 | Application framework |
@@ -580,9 +584,24 @@ docker compose --profile agents --profile orchestrator --profile generator up -d
 
 ### ML-Based Predictive Maintenance
 
-- MADlib logistic regression model with 12 coefficients (intercept + 11 features)
-- Features: all 6 normalized sensor values, vibration/temperature trend rates, days since maintenance, equipment age, anomaly count
-- Real-time scoring via GemFire PMML — scores 72 equipment per 30s cycle
+**Train in Greenplum → Export PMML → Deploy to GemFire → GemFire scores in real-time**
+
+```mermaid
+flowchart LR
+    GP[(Greenplum<br/>MADlib)] -->|logregr_train| MODEL[Logistic Regression<br/>12 coefficients]
+    MODEL -->|Export| PMML[PMML 4.4 XML]
+    PMML -->|region.put| GF[GemFire<br/>PmmlModels Region]
+    GF -->|PmmlScoringFunction| SCORE[Real-Time<br/>Scoring]
+    MQTT[MQTT Sensor Data] --> FE[Feature Engineering<br/>Normalization + Trends]
+    FE -->|FunctionService.onRegion| SCORE
+    SCORE --> PRED[SensorPredictions<br/>Region]
+```
+
+- **Training**: MADlib `logregr_train` in Greenplum produces logistic regression with 12 coefficients (intercept + 11 features)
+- **Export**: Model exported as PMML 4.4 XML and stored in GemFire `PmmlModels` REPLICATE region
+- **Scoring**: GemFire server-side `PmmlScoringFunction` evaluates PMML using JPMML-evaluator — scores 72 equipment per 30s cycle
+- **Features**: 6 normalized sensor values (vibration, temperature, power, RPM, pressure, torque), vibration/temperature trend rates, days since maintenance, equipment age, anomaly count
+- **Deployment**: Function JAR deployed via `gfsh deploy --jar` with JAXB runtime bundled (JDK 17 target)
 - Heuristic failure diagnosis identifies specific failure type (bearing, electrical, coolant, motor, spindle)
 - Run-to-failure data modeled after NASA C-MAPSS datasets
 - SQL functions: `predict_equipment_failure()`, `estimate_equipment_rul()`

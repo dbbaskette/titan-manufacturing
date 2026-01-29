@@ -5,6 +5,20 @@ spring:
   application:
     name: titan-orchestrator
 
+  # Database configuration (for recommendations and automated_actions)
+  datasource:
+    url: ${GREENPLUM_URL:jdbc:postgresql://localhost:15432/titan-manufacturing}
+    username: ${GREENPLUM_USER:gpadmin}
+    password: ${GREENPLUM_PASSWORD:VMware1!}
+    driver-class-name: org.postgresql.Driver
+
+  # RabbitMQ configuration (for anomaly events)
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:titan}
+    password: ${RABBITMQ_PASS:titan5.0}
+
   # Spring AI configuration
   ai:
     openai:
@@ -55,12 +69,21 @@ spring:
               endpoint: /mcp
             # order-tools, communications-tools, governance-tools disabled until /mcp endpoint configured
 
+# Anomaly event configuration
+anomaly:
+  exchange: titan.anomaly
+  queues:
+    critical: orchestrator.critical
+    high: orchestrator.high
+
 # Titan service URLs
 titan:
   maintenance:
     url: ${MAINTENANCE_URL:http://localhost:8082}
   generator:
     url: ${GENERATOR_URL:http://localhost:8090}
+  order:
+    url: ${ORDER_URL:http://localhost:8085}
 
 # Embabel agent configuration
 embabel:
