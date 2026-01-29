@@ -19,6 +19,12 @@ x-mqtt-env: &mqtt-env
   MQTT_USER: ${RABBITMQ_USER:-titan}
   MQTT_PASS: ${RABBITMQ_PASSWORD:-titan5.0}
 
+x-rabbitmq-env: &rabbitmq-env
+  RABBITMQ_HOST: rabbitmq
+  RABBITMQ_PORT: "5672"
+  RABBITMQ_USER: ${RABBITMQ_USER:-titan}
+  RABBITMQ_PASS: ${RABBITMQ_PASSWORD:-titan5.0}
+
 x-logging: &default-logging
   driver: "json-file"
   options:
@@ -139,6 +145,15 @@ services:
       - "8080:8080"
     environment:
       - SPRING_PROFILES_ACTIVE=docker
+      # Database
+      - GREENPLUM_URL=jdbc:postgresql://greenplum:5432/titan-manufacturing
+      - GREENPLUM_USER=${GREENPLUM_USER:-gpadmin}
+      - GREENPLUM_PASSWORD=${GREENPLUM_PASSWORD:-VMware1!}
+      # RabbitMQ
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=${RABBITMQ_USER:-titan}
+      - RABBITMQ_PASS=${RABBITMQ_PASSWORD:-titan5.0}
       # Use Ollama via OpenAI-compatible endpoint
       - OPENAI_API_KEY=${OPENAI_API_KEY:-ollama}
       - OPENAI_BASE_URL=${OPENAI_BASE_URL:-http://host.docker.internal:11434}
@@ -156,6 +171,7 @@ services:
       - MCP_SERVERS_GOVERNANCE=http://governance-mcp-server:8087
       - MAINTENANCE_URL=http://maintenance-mcp-server:8082
       - GENERATOR_URL=http://sensor-data-generator:8090
+      - ORDER_URL=http://order-mcp-server:8085
     depends_on:
       greenplum:
         condition: service_healthy
@@ -235,7 +251,7 @@ services:
       - "8082:8082"
     environment:
       SPRING_PROFILES_ACTIVE: docker
-      <<: [*greenplum-env, *mqtt-env]
+      <<: [*greenplum-env, *mqtt-env, *rabbitmq-env]
       GEMFIRE_LOCATOR_HOST: gemfire
       GEMFIRE_LOCATOR_PORT: "10334"
     depends_on:
@@ -568,6 +584,7 @@ services:
     volumes:
       - gemfire-data:/data
       - ./config/gemfire/entrypoint.sh:/entrypoint.sh:ro
+      - ./gemfire-scoring-function/target/gemfire-scoring-function.jar:/opt/gemfire/extensions/gemfire-scoring-function.jar:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:7070/pulse/login.html || exit 1"]
       interval: 15s

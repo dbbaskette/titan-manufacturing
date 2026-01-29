@@ -1378,16 +1378,30 @@ CREATE TABLE ml_training_data (
     equipment_age_years DOUBLE PRECISION NOT NULL,     -- capped at 20
     anomaly_count INTEGER NOT NULL,
     power_normalized DOUBLE PRECISION NOT NULL DEFAULT 0.3,       -- avg_power / 50.0
-    rpm_normalized DOUBLE PRECISION NOT NULL DEFAULT 0.85,        -- avg_rpm / 10000.0
-    pressure_normalized DOUBLE PRECISION NOT NULL DEFAULT 0.6,    -- avg_pressure / 10.0
-    torque_normalized DOUBLE PRECISION NOT NULL DEFAULT 0.56,     -- avg_torque / 80.0
+    rpm_normalized DOUBLE PRECISION NOT NULL DEFAULT 0.85,        -- avg_rpm / 10000.0 (RPM_MAX in scoring)
+    pressure_normalized DOUBLE PRECISION NOT NULL DEFAULT 0.6,    -- avg_pressure / 10.0 (PRESSURE_MAX in scoring)
+    torque_normalized DOUBLE PRECISION NOT NULL DEFAULT 0.5625,   -- avg_torque / 80.0 (TORQUE_MAX in scoring)
     failed INTEGER NOT NULL  -- 0 = survived, 1 = failed
 );
 
--- Seed synthetic training data: ~500 observations
--- Normal operation (failed=0): low vibration/temp, stable trends
--- Pre-failure (failed=1): elevated vibration/temp, rising trends, anomalies
--- Each failure pattern has distinct sensor signatures across all 6 sensor types.
+-- Seed synthetic training data: ~700 observations
+-- Design goals:
+--   1) Smooth sigmoid transition (not a step function) — achieved via overlapping ranges
+--   2) At ~60 degradation cycles, HIGH-capped equipment scores prob ≈ 0.5-0.7
+--   3) All 5 failure patterns distinguishable by their multi-sensor signatures
+--   4) At 10x speed, anomalies trigger in ~1 minute (60 cycles = 12 ticks × 5 cycles/tick)
+--
+-- Scoring normalization (must match GemFireScoringService):
+--   vib/5.0, temp/85.0, rpm/10000.0, power/50.0, pressure/10.0, torque/80.0
+-- Generator baselines:  vib=2.0, temp=50, rpm=8500, power=15, pressure=6.0, torque=45
+-- Normalized baselines:  vib=0.40, temp=0.59, rpm=0.85, power=0.30, pressure=0.60, torque=0.56
+--
+-- Generator degradation formulas (determines what the scoring service actually sees):
+--   BEARING:      vib=2+c*0.035, temp=50+(vib-2)*6, rpm=8500-c*2, pwr=15+c*0.03, pres=6.0, trq=45+c*0.05
+--   MOTOR_BURNOUT:temp=50+c*0.35, vib=2+c*0.02, pwr=15+c*0.12, rpm=8500-c*18, trq=45+c*0.04, pres=6.0
+--   SPINDLE_WEAR: rpm=8500-c*10, vib=2+c*0.03, temp=50+c*0.05, trq=45+c*0.07, pwr=15+c*0.02, pres=6.0
+--   COOLANT:      temp=50+c*0.18, pres=6.0-c*0.035, vib=2+c*0.008, rpm=8500, trq=45+c*0.02, pwr=15+c*0.01
+--   ELECTRICAL:   pwr=15+c*0.12, rpm=8500-c*15, vib=2+c*0.015, temp=50+c*0.06, trq=45+c*0.04, pres=6.0-c*0.008
 DO $$
 DECLARE
     i INTEGER;
@@ -1403,19 +1417,22 @@ DECLARE
     pres DOUBLE PRECISION;
     trq DOUBLE PRECISION;
 BEGIN
-    -- === NORMAL OPERATION SAMPLES (350 rows, failed=0) ===
-    FOR i IN 1..350 LOOP
-        vib := 0.30 + random() * 0.25;           -- 0.30-0.55 (1.5-2.75 mm/s)
-        temp := 0.50 + random() * 0.22;          -- 0.50-0.72 (42-61°C)
-        vib_trend := (random() - 0.5) * 0.1;
-        temp_trend := (random() - 0.5) * 0.2;
-        days_maint := 5 + random() * 55;
-        age := 0.5 + random() * 7.5;
-        anomalies := CASE WHEN random() < 0.05 THEN 1 ELSE 0 END;
-        pwr := 0.25 + random() * 0.15;           -- 0.25-0.40 (12.5-20 kW)
-        rpm := 0.80 + random() * 0.10;           -- 0.80-0.90 (8000-9000 RPM)
-        pres := 0.55 + random() * 0.10;          -- 0.55-0.65 (5.5-6.5 bar)
-        trq := 0.50 + random() * 0.15;           -- 0.50-0.65 (40-52 Nm)
+    -- ═══════════════════════════════════════════════════════════════════════════
+    -- NORMAL OPERATION (280 rows, failed=0)
+    -- Baseline sensors with noise. Centered on actual generator baselines.
+    -- ═══════════════════════════════════════════════════════════════════════════
+    FOR i IN 1..280 LOOP
+        vib := 0.32 + random() * 0.16;           -- 0.32-0.48 (1.6-2.4 mm/s)
+        temp := 0.53 + random() * 0.12;          -- 0.53-0.65 (45-55°C)
+        vib_trend := (random() - 0.5) * 0.06;    -- near-zero trend
+        temp_trend := (random() - 0.5) * 0.08;
+        days_maint := 5 + random() * 45;
+        age := 0.5 + random() * 6.0;
+        anomalies := CASE WHEN random() < 0.03 THEN 1 ELSE 0 END;
+        pwr := 0.26 + random() * 0.10;           -- 0.26-0.36 (13-18 kW)
+        rpm := 0.82 + random() * 0.06;           -- 0.82-0.88 (8200-8800 RPM)
+        pres := 0.56 + random() * 0.10;          -- 0.56-0.66 (5.6-6.6 bar)
+        trq := 0.52 + random() * 0.10;           -- 0.52-0.62 (42-50 Nm)
 
         INSERT INTO ml_training_data (vibration_normalized, temperature_normalized,
             vibration_trend_rate, temperature_trend_rate, days_since_maintenance,
@@ -1425,21 +1442,58 @@ BEGIN
                 pwr, rpm, pres, trq, 0);
     END LOOP;
 
-    -- === PRE-FAILURE SAMPLES (150 rows, failed=1) ===
+    -- ═══════════════════════════════════════════════════════════════════════════
+    -- STRESSED NORMAL (70 rows, failed=0)
+    -- Equipment under load but surviving. Overlaps with early-failure zone
+    -- so MADlib learns a gradual sigmoid instead of a step function.
+    -- Matches sensor values at ~25-35 degradation cycles (early stage).
+    -- ═══════════════════════════════════════════════════════════════════════════
+    FOR i IN 1..70 LOOP
+        vib := 0.45 + random() * 0.18;           -- 0.45-0.63 (2.25-3.15 mm/s)
+        temp := 0.62 + random() * 0.12;          -- 0.62-0.74 (53-63°C)
+        vib_trend := random() * 0.05;            -- slight positive
+        temp_trend := random() * 0.06;
+        days_maint := 20 + random() * 50;
+        age := 1.0 + random() * 8.0;
+        anomalies := CASE WHEN random() < 0.15 THEN 1 ELSE 0 END;
+        pwr := 0.30 + random() * 0.10;           -- 0.30-0.40
+        rpm := 0.80 + random() * 0.06;           -- 0.80-0.86 (still near baseline)
+        pres := 0.52 + random() * 0.12;          -- 0.52-0.64
+        trq := 0.54 + random() * 0.10;           -- 0.54-0.64
 
-    -- Bearing degradation (60 rows): high vibration, moderate temp, elevated torque
-    FOR i IN 1..60 LOOP
-        vib := 0.65 + random() * 0.35;           -- 0.65-1.0 (3.25-5.0 mm/s)
-        temp := 0.60 + random() * 0.30;          -- 0.60-0.90
-        vib_trend := 0.10 + random() * 0.35;
-        temp_trend := 0.05 + random() * 0.25;
-        days_maint := 30 + random() * 60;
-        age := 2.0 + random() * 10.0;
+        INSERT INTO ml_training_data (vibration_normalized, temperature_normalized,
+            vibration_trend_rate, temperature_trend_rate, days_since_maintenance,
+            equipment_age_years, anomaly_count, power_normalized, rpm_normalized,
+            pressure_normalized, torque_normalized, failed)
+        VALUES (vib, temp, vib_trend, temp_trend, days_maint, age, anomalies,
+                pwr, rpm, pres, trq, 0);
+    END LOOP;
+
+    -- ═══════════════════════════════════════════════════════════════════════════
+    -- PRE-FAILURE SAMPLES (350 rows, failed=1)
+    -- Two tiers per pattern: "early warning" (~50-70 cycles) and
+    -- "late failure" (~80-120+ cycles). Sensor ranges derived from actual
+    -- generator degradation formulas normalized by scoring service constants.
+    -- ═══════════════════════════════════════════════════════════════════════════
+
+    -- ── BEARING DEGRADATION ──────────────────────────────────────────────────
+    -- Signature: vibration↑↑, temp follows friction, torque↑, RPM slight drop
+    -- At c=60: vib=0.82, temp=0.74, rpm=0.838, pwr=0.34, pres=0.60, trq=0.60
+    -- At c=80: vib=0.96, temp=0.79, rpm=0.834, pwr=0.35, pres=0.60, trq=0.61
+
+    -- Early warning (35 rows) — ~50-70 cycle equivalent
+    FOR i IN 1..35 LOOP
+        vib := 0.64 + random() * 0.22;           -- 0.64-0.86
+        temp := 0.68 + random() * 0.14;          -- 0.68-0.82
+        vib_trend := 0.03 + random() * 0.08;     -- moderate rising trend
+        temp_trend := 0.02 + random() * 0.06;
+        days_maint := 25 + random() * 50;
+        age := 2.0 + random() * 8.0;
         anomalies := CASE WHEN random() < 0.3 THEN 0 WHEN random() < 0.7 THEN 1 ELSE 2 END;
-        pwr := 0.30 + random() * 0.20;           -- 0.30-0.50 (slightly elevated)
-        rpm := 0.75 + random() * 0.15;           -- 0.75-0.90 (normal-ish)
-        pres := 0.50 + random() * 0.15;          -- 0.50-0.65 (normal)
-        trq := 0.60 + random() * 0.25;           -- 0.60-0.85 (elevated torque)
+        pwr := 0.32 + random() * 0.06;           -- 0.32-0.38 (slightly elevated)
+        rpm := 0.82 + random() * 0.04;           -- 0.82-0.86 (slight drop from 0.85)
+        pres := 0.56 + random() * 0.10;          -- 0.56-0.66 (stable)
+        trq := 0.57 + random() * 0.06;           -- 0.57-0.63
 
         INSERT INTO ml_training_data (vibration_normalized, temperature_normalized,
             vibration_trend_rate, temperature_trend_rate, days_since_maintenance,
@@ -1449,85 +1503,215 @@ BEGIN
                 pwr, rpm, pres, trq, 1);
     END LOOP;
 
-    -- Motor burnout (40 rows): extreme temperature, high power draw, RPM drops
-    FOR i IN 1..40 LOOP
-        vib := 0.45 + random() * 0.30;
-        temp := 0.80 + random() * 0.20;          -- 0.80-1.0 (68-85°C)
-        vib_trend := (random() - 0.3) * 0.2;
-        temp_trend := 0.20 + random() * 0.60;
-        days_maint := 20 + random() * 70;
-        age := 3.0 + random() * 12.0;
-        anomalies := CASE WHEN random() < 0.4 THEN 1 ELSE 2 END;
-        pwr := 0.60 + random() * 0.30;           -- 0.60-0.90 (high power)
-        rpm := 0.60 + random() * 0.20;           -- 0.60-0.80 (RPM dropping)
-        pres := 0.50 + random() * 0.15;          -- 0.50-0.65 (normal)
-        trq := 0.55 + random() * 0.20;           -- 0.55-0.75 (moderate)
-
-        INSERT INTO ml_training_data (vibration_normalized, temperature_normalized,
-            vibration_trend_rate, temperature_trend_rate, days_since_maintenance,
-            equipment_age_years, anomaly_count, power_normalized, rpm_normalized,
-            pressure_normalized, torque_normalized, failed)
-        VALUES (vib, temp, vib_trend, temp_trend, days_maint, age, anomalies,
-                pwr, rpm, pres, trq, 1);
-    END LOOP;
-
-    -- Electrical fault (20 rows): power spikes, RPM instability, moderate vibration
-    FOR i IN 1..20 LOOP
-        vib := 0.50 + random() * 0.30;           -- 0.50-0.80
-        temp := 0.60 + random() * 0.25;          -- 0.60-0.85
-        vib_trend := 0.05 + random() * 0.20;
-        temp_trend := 0.10 + random() * 0.30;
-        days_maint := 15 + random() * 60;
-        age := 1.0 + random() * 12.0;
-        anomalies := 1 + floor(random() * 2)::INTEGER;
-        pwr := 0.70 + random() * 0.30;           -- 0.70-1.0 (power spikes!)
-        rpm := 0.50 + random() * 0.25;           -- 0.50-0.75 (RPM drops)
-        pres := 0.45 + random() * 0.15;          -- 0.45-0.60 (slightly low)
-        trq := 0.50 + random() * 0.20;           -- 0.50-0.70 (normal-ish)
-
-        INSERT INTO ml_training_data (vibration_normalized, temperature_normalized,
-            vibration_trend_rate, temperature_trend_rate, days_since_maintenance,
-            equipment_age_years, anomaly_count, power_normalized, rpm_normalized,
-            pressure_normalized, torque_normalized, failed)
-        VALUES (vib, temp, vib_trend, temp_trend, days_maint, age, anomalies,
-                pwr, rpm, pres, trq, 1);
-    END LOOP;
-
-    -- Coolant failure (15 rows): high temp, low pressure, normal vibration
-    FOR i IN 1..15 LOOP
-        vib := 0.35 + random() * 0.25;           -- 0.35-0.60 (relatively normal)
-        temp := 0.75 + random() * 0.25;          -- 0.75-1.0 (high temp)
-        vib_trend := (random() - 0.3) * 0.15;
-        temp_trend := 0.15 + random() * 0.50;    -- rising temp
-        days_maint := 25 + random() * 65;
-        age := 2.0 + random() * 10.0;
-        anomalies := floor(random() * 2)::INTEGER;
-        pwr := 0.30 + random() * 0.20;           -- 0.30-0.50 (normal)
-        rpm := 0.80 + random() * 0.10;           -- 0.80-0.90 (normal)
-        pres := 0.30 + random() * 0.20;          -- 0.30-0.50 (LOW pressure!)
-        trq := 0.50 + random() * 0.15;           -- 0.50-0.65 (normal)
-
-        INSERT INTO ml_training_data (vibration_normalized, temperature_normalized,
-            vibration_trend_rate, temperature_trend_rate, days_since_maintenance,
-            equipment_age_years, anomaly_count, power_normalized, rpm_normalized,
-            pressure_normalized, torque_normalized, failed)
-        VALUES (vib, temp, vib_trend, temp_trend, days_maint, age, anomalies,
-                pwr, rpm, pres, trq, 1);
-    END LOOP;
-
-    -- Spindle wear (15 rows): vibration + high torque, RPM drops
-    FOR i IN 1..15 LOOP
-        vib := 0.55 + random() * 0.35;           -- 0.55-0.90
-        temp := 0.60 + random() * 0.25;          -- 0.60-0.85
-        vib_trend := 0.08 + random() * 0.25;
-        temp_trend := 0.05 + random() * 0.25;
+    -- Late failure (35 rows) — ~80-120+ cycle equivalent
+    FOR i IN 1..35 LOOP
+        vib := 0.88 + random() * 0.20;           -- 0.88-1.08 (>5 mm/s)
+        temp := 0.78 + random() * 0.16;          -- 0.78-0.94
+        vib_trend := 0.08 + random() * 0.15;     -- strong rising trend
+        temp_trend := 0.05 + random() * 0.10;
         days_maint := 35 + random() * 55;
+        age := 3.0 + random() * 10.0;
+        anomalies := 1 + floor(random() * 2)::INTEGER;
+        pwr := 0.35 + random() * 0.10;           -- 0.35-0.45
+        rpm := 0.80 + random() * 0.04;           -- 0.80-0.84
+        pres := 0.56 + random() * 0.10;          -- stable
+        trq := 0.61 + random() * 0.10;           -- 0.61-0.71
+
+        INSERT INTO ml_training_data (vibration_normalized, temperature_normalized,
+            vibration_trend_rate, temperature_trend_rate, days_since_maintenance,
+            equipment_age_years, anomaly_count, power_normalized, rpm_normalized,
+            pressure_normalized, torque_normalized, failed)
+        VALUES (vib, temp, vib_trend, temp_trend, days_maint, age, anomalies,
+                pwr, rpm, pres, trq, 1);
+    END LOOP;
+
+    -- ── MOTOR BURNOUT ────────────────────────────────────────────────────────
+    -- Signature: temp↑↑↑ (dominant), power↑, RPM drops hard, vib moderate
+    -- At c=60: vib=0.64, temp=0.84, rpm=0.742, pwr=0.44, pres=0.60, trq=0.59
+    -- At c=80: vib=0.72, temp=0.92, rpm=0.706, pwr=0.49, pres=0.60, trq=0.60
+
+    -- Early warning (30 rows) — ~50-70 cycle equivalent
+    FOR i IN 1..30 LOOP
+        vib := 0.52 + random() * 0.16;           -- 0.52-0.68
+        temp := 0.76 + random() * 0.12;          -- 0.76-0.88
+        vib_trend := (random() - 0.3) * 0.08;    -- erratic
+        temp_trend := 0.04 + random() * 0.10;    -- rising
+        days_maint := 20 + random() * 60;
+        age := 2.0 + random() * 10.0;
+        anomalies := CASE WHEN random() < 0.4 THEN 1 ELSE 2 END;
+        pwr := 0.40 + random() * 0.10;           -- 0.40-0.50 (elevated)
+        rpm := 0.72 + random() * 0.06;           -- 0.72-0.78 (dropping from 0.85)
+        pres := 0.56 + random() * 0.10;          -- stable
+        trq := 0.57 + random() * 0.06;           -- 0.57-0.63
+
+        INSERT INTO ml_training_data (vibration_normalized, temperature_normalized,
+            vibration_trend_rate, temperature_trend_rate, days_since_maintenance,
+            equipment_age_years, anomaly_count, power_normalized, rpm_normalized,
+            pressure_normalized, torque_normalized, failed)
+        VALUES (vib, temp, vib_trend, temp_trend, days_maint, age, anomalies,
+                pwr, rpm, pres, trq, 1);
+    END LOOP;
+
+    -- Late failure (30 rows) — ~80-120 cycle equivalent
+    FOR i IN 1..30 LOOP
+        vib := 0.64 + random() * 0.20;           -- 0.64-0.84
+        temp := 0.88 + random() * 0.14;          -- 0.88-1.02 (75-87°C)
+        vib_trend := (random() - 0.2) * 0.12;
+        temp_trend := 0.10 + random() * 0.20;    -- strong rising
+        days_maint := 25 + random() * 65;
         age := 3.0 + random() * 12.0;
-        anomalies := floor(random() * 3)::INTEGER;
-        pwr := 0.35 + random() * 0.20;           -- 0.35-0.55 (slightly elevated)
-        rpm := 0.65 + random() * 0.15;           -- 0.65-0.80 (RPM dropping)
-        pres := 0.50 + random() * 0.10;          -- 0.50-0.60 (normal)
-        trq := 0.70 + random() * 0.25;           -- 0.70-0.95 (HIGH torque!)
+        anomalies := 1 + floor(random() * 2)::INTEGER;
+        pwr := 0.50 + random() * 0.16;           -- 0.50-0.66 (high power)
+        rpm := 0.60 + random() * 0.12;           -- 0.60-0.72 (RPM dropping hard)
+        pres := 0.56 + random() * 0.10;          -- stable
+        trq := 0.59 + random() * 0.08;           -- 0.59-0.67
+
+        INSERT INTO ml_training_data (vibration_normalized, temperature_normalized,
+            vibration_trend_rate, temperature_trend_rate, days_since_maintenance,
+            equipment_age_years, anomaly_count, power_normalized, rpm_normalized,
+            pressure_normalized, torque_normalized, failed)
+        VALUES (vib, temp, vib_trend, temp_trend, days_maint, age, anomalies,
+                pwr, rpm, pres, trq, 1);
+    END LOOP;
+
+    -- ── SPINDLE WEAR ─────────────────────────────────────────────────────────
+    -- Signature: RPM↓ (10/cycle = dramatic), vibration↑, torque↑↑, temp slight
+    -- At c=60: vib=0.76, temp=0.62, rpm=0.790, pwr=0.32, pres=0.60, trq=0.62
+    -- At c=80: vib=0.88, temp=0.64, rpm=0.770, pwr=0.33, pres=0.60, trq=0.63
+
+    -- Early warning (25 rows) — ~50-70 cycle equivalent
+    FOR i IN 1..25 LOOP
+        vib := 0.60 + random() * 0.20;           -- 0.60-0.80
+        temp := 0.60 + random() * 0.08;          -- 0.60-0.68 (slight rise)
+        vib_trend := 0.02 + random() * 0.06;
+        temp_trend := 0.01 + random() * 0.04;
+        days_maint := 30 + random() * 50;
+        age := 3.0 + random() * 10.0;
+        anomalies := floor(random() * 2)::INTEGER;
+        pwr := 0.30 + random() * 0.06;           -- 0.30-0.36
+        rpm := 0.76 + random() * 0.06;           -- 0.76-0.82 (dropping from 0.85)
+        pres := 0.56 + random() * 0.10;          -- stable
+        trq := 0.60 + random() * 0.08;           -- 0.60-0.68 (rising)
+
+        INSERT INTO ml_training_data (vibration_normalized, temperature_normalized,
+            vibration_trend_rate, temperature_trend_rate, days_since_maintenance,
+            equipment_age_years, anomaly_count, power_normalized, rpm_normalized,
+            pressure_normalized, torque_normalized, failed)
+        VALUES (vib, temp, vib_trend, temp_trend, days_maint, age, anomalies,
+                pwr, rpm, pres, trq, 1);
+    END LOOP;
+
+    -- Late failure (25 rows) — ~80-120 cycle equivalent
+    FOR i IN 1..25 LOOP
+        vib := 0.80 + random() * 0.20;           -- 0.80-1.00
+        temp := 0.62 + random() * 0.12;          -- 0.62-0.74
+        vib_trend := 0.05 + random() * 0.10;
+        temp_trend := 0.02 + random() * 0.06;
+        days_maint := 40 + random() * 50;
+        age := 4.0 + random() * 12.0;
+        anomalies := 1 + floor(random() * 2)::INTEGER;
+        pwr := 0.32 + random() * 0.10;           -- 0.32-0.42
+        rpm := 0.66 + random() * 0.10;           -- 0.66-0.76 (significantly lower)
+        pres := 0.56 + random() * 0.10;          -- stable
+        trq := 0.66 + random() * 0.16;           -- 0.66-0.82 (HIGH torque!)
+
+        INSERT INTO ml_training_data (vibration_normalized, temperature_normalized,
+            vibration_trend_rate, temperature_trend_rate, days_since_maintenance,
+            equipment_age_years, anomaly_count, power_normalized, rpm_normalized,
+            pressure_normalized, torque_normalized, failed)
+        VALUES (vib, temp, vib_trend, temp_trend, days_maint, age, anomalies,
+                pwr, rpm, pres, trq, 1);
+    END LOOP;
+
+    -- ── COOLANT FAILURE ──────────────────────────────────────────────────────
+    -- Signature: temp↑↑, pressure↓↓ (dominant differentiator), vib near-normal
+    -- At c=60: vib=0.50, temp=0.72, rpm=0.85, pwr=0.31, pres=0.39, trq=0.58
+    -- At c=100: vib=0.56, temp=0.80, rpm=0.85, pwr=0.32, pres=0.25, trq=0.59
+
+    -- Early warning (25 rows) — ~50-80 cycle equivalent
+    FOR i IN 1..25 LOOP
+        vib := 0.44 + random() * 0.12;           -- 0.44-0.56 (near normal)
+        temp := 0.68 + random() * 0.10;          -- 0.68-0.78
+        vib_trend := (random() - 0.3) * 0.06;
+        temp_trend := 0.03 + random() * 0.08;    -- rising
+        days_maint := 25 + random() * 55;
+        age := 2.0 + random() * 8.0;
+        anomalies := floor(random() * 2)::INTEGER;
+        pwr := 0.30 + random() * 0.06;           -- near baseline
+        rpm := 0.82 + random() * 0.06;           -- 0.82-0.88 (stable!)
+        pres := 0.30 + random() * 0.16;          -- 0.30-0.46 (dropping)
+        trq := 0.56 + random() * 0.06;           -- near baseline
+
+        INSERT INTO ml_training_data (vibration_normalized, temperature_normalized,
+            vibration_trend_rate, temperature_trend_rate, days_since_maintenance,
+            equipment_age_years, anomaly_count, power_normalized, rpm_normalized,
+            pressure_normalized, torque_normalized, failed)
+        VALUES (vib, temp, vib_trend, temp_trend, days_maint, age, anomalies,
+                pwr, rpm, pres, trq, 1);
+    END LOOP;
+
+    -- Late failure (25 rows) — ~100-150 cycle equivalent
+    FOR i IN 1..25 LOOP
+        vib := 0.50 + random() * 0.14;           -- 0.50-0.64
+        temp := 0.78 + random() * 0.16;          -- 0.78-0.94 (high)
+        vib_trend := (random() - 0.2) * 0.08;
+        temp_trend := 0.08 + random() * 0.15;    -- strong rising
+        days_maint := 30 + random() * 60;
+        age := 3.0 + random() * 10.0;
+        anomalies := 1 + floor(random() * 2)::INTEGER;
+        pwr := 0.30 + random() * 0.08;           -- near baseline
+        rpm := 0.82 + random() * 0.06;           -- 0.82-0.88 (stable!)
+        pres := 0.10 + random() * 0.20;          -- 0.10-0.30 (LOW pressure!)
+        trq := 0.56 + random() * 0.08;           -- near baseline
+
+        INSERT INTO ml_training_data (vibration_normalized, temperature_normalized,
+            vibration_trend_rate, temperature_trend_rate, days_since_maintenance,
+            equipment_age_years, anomaly_count, power_normalized, rpm_normalized,
+            pressure_normalized, torque_normalized, failed)
+        VALUES (vib, temp, vib_trend, temp_trend, days_maint, age, anomalies,
+                pwr, rpm, pres, trq, 1);
+    END LOOP;
+
+    -- ── ELECTRICAL FAULT ─────────────────────────────────────────────────────
+    -- Signature: power↑↑ (spikes), RPM↓ erratic, vib↑, temp moderate, pres slight drop
+    -- At c=60: vib=0.58, temp=0.63, rpm=0.76, pwr=0.44, pres=0.55, trq=0.59
+    -- At c=80: vib=0.64, temp=0.65, rpm=0.73, pwr=0.49, pres=0.54, trq=0.60
+
+    -- Early warning (30 rows) — ~50-70 cycle equivalent
+    FOR i IN 1..30 LOOP
+        vib := 0.50 + random() * 0.14;           -- 0.50-0.64
+        temp := 0.62 + random() * 0.08;          -- 0.62-0.70
+        vib_trend := 0.02 + random() * 0.06;
+        temp_trend := 0.02 + random() * 0.06;
+        days_maint := 15 + random() * 50;
+        age := 1.0 + random() * 10.0;
+        anomalies := 1 + floor(random() * 2)::INTEGER;
+        pwr := 0.42 + random() * 0.12;           -- 0.42-0.54 (elevated)
+        rpm := 0.73 + random() * 0.06;           -- 0.73-0.79 (dropping)
+        pres := 0.52 + random() * 0.08;          -- 0.52-0.60 (slight drop)
+        trq := 0.57 + random() * 0.08;           -- 0.57-0.65
+
+        INSERT INTO ml_training_data (vibration_normalized, temperature_normalized,
+            vibration_trend_rate, temperature_trend_rate, days_since_maintenance,
+            equipment_age_years, anomaly_count, power_normalized, rpm_normalized,
+            pressure_normalized, torque_normalized, failed)
+        VALUES (vib, temp, vib_trend, temp_trend, days_maint, age, anomalies,
+                pwr, rpm, pres, trq, 1);
+    END LOOP;
+
+    -- Late failure (30 rows) — ~80-120 cycle equivalent
+    FOR i IN 1..30 LOOP
+        vib := 0.60 + random() * 0.18;           -- 0.60-0.78
+        temp := 0.64 + random() * 0.14;          -- 0.64-0.78
+        vib_trend := 0.04 + random() * 0.10;
+        temp_trend := 0.04 + random() * 0.10;
+        days_maint := 20 + random() * 55;
+        age := 2.0 + random() * 12.0;
+        anomalies := 1 + floor(random() * 2)::INTEGER;
+        pwr := 0.56 + random() * 0.24;           -- 0.56-0.80 (power spikes!)
+        rpm := 0.58 + random() * 0.14;           -- 0.58-0.72 (low RPM)
+        pres := 0.46 + random() * 0.10;          -- 0.46-0.56 (dropping)
+        trq := 0.59 + random() * 0.12;           -- 0.59-0.71
 
         INSERT INTO ml_training_data (vibration_normalized, temperature_normalized,
             vibration_trend_rate, temperature_trend_rate, days_since_maintenance,
@@ -2214,3 +2398,54 @@ INSERT INTO customer_inquiries (customer_id, order_id, inquiry_type, inquiry_tex
 ('CUST-001', 'TM-2024-45890', 'STATUS', 'What is the current status of order TM-2024-45890? We need this for our production schedule.', 'Your order TM-2024-45890 is currently in production and on schedule for delivery by the original date. All materials have been allocated and manufacturing is proceeding as planned.', 'RESOLVED', '2024-07-18 10:30:00', '2024-07-18 11:45:00'),
 ('CUST-002', 'TM-2024-45875', 'EXPEDITE', 'Can we expedite order TM-2024-45875? We have an urgent production need.', 'We have reviewed your expedite request for TM-2024-45875. Given your strategic account status, we can accommodate a 3-day acceleration. Additional expedite charges will apply.', 'RESOLVED', '2024-07-15 14:00:00', '2024-07-15 16:30:00'),
 ('CUST-003', NULL, 'GENERAL', 'What lead times should we expect for large energy sector orders in Q4?', NULL, 'OPEN', '2024-07-22 08:00:00', NULL);
+
+-- =============================================================================
+-- PHASE 2: ANOMALY RESPONSE ORCHESTRATION
+-- =============================================================================
+
+-- Maintenance recommendations for HIGH risk alerts (awaiting human approval)
+CREATE TABLE maintenance_recommendations (
+    recommendation_id VARCHAR(50) PRIMARY KEY,
+    equipment_id VARCHAR(50) NOT NULL,
+    facility_id VARCHAR(10) NOT NULL,
+    risk_level VARCHAR(20) NOT NULL,
+    failure_probability DECIMAL(5,4),
+    probable_cause TEXT,
+    recommended_action TEXT,
+    recommended_parts JSONB,          -- [{sku, name, qty, unitPrice}]
+    reservation_id VARCHAR(50),        -- Links to stock_reservations
+    estimated_cost DECIMAL(10,2),
+    status VARCHAR(20) DEFAULT 'PENDING',  -- PENDING, APPROVED, DISMISSED, SUPERSEDED, EXPIRED
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP,
+    approved_at TIMESTAMP,
+    approved_by VARCHAR(100),
+    work_order_id VARCHAR(50),         -- Populated after approval
+    notes TEXT
+);
+
+CREATE INDEX idx_recommendations_equipment ON maintenance_recommendations(equipment_id);
+CREATE INDEX idx_recommendations_status ON maintenance_recommendations(status);
+CREATE INDEX idx_recommendations_facility ON maintenance_recommendations(facility_id);
+
+-- Automated actions for CRITICAL alerts (fully automated workflow)
+CREATE TABLE automated_actions (
+    action_id VARCHAR(50) PRIMARY KEY,
+    event_id VARCHAR(100) NOT NULL,
+    equipment_id VARCHAR(50) NOT NULL,
+    facility_id VARCHAR(10) NOT NULL,
+    action_type VARCHAR(50),           -- CRITICAL_RESPONSE
+    risk_level VARCHAR(20),
+    failure_probability DECIMAL(5,4),
+    probable_cause TEXT,
+    work_order_id VARCHAR(50),
+    parts_reserved JSONB,              -- [{sku, name, qty, reservationId}]
+    notification_sent BOOLEAN DEFAULT FALSE,
+    status VARCHAR(20) DEFAULT 'COMPLETED',
+    executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    execution_summary TEXT
+);
+
+CREATE INDEX idx_automated_actions_equipment ON automated_actions(equipment_id);
+CREATE INDEX idx_automated_actions_facility ON automated_actions(facility_id);
+CREATE INDEX idx_automated_actions_executed ON automated_actions(executed_at);

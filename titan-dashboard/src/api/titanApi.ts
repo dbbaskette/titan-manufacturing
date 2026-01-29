@@ -102,6 +102,60 @@ class TitanApi {
   async deployModel(): Promise<MLDeployResult> {
     return this.fetch<MLDeployResult>('/ml/deploy', { method: 'POST' });
   }
+
+  // Order endpoints
+  async getOrders(): Promise<OrderSummary[]> {
+    return this.fetch<OrderSummary[]>('/orders');
+  }
+
+  async getOrderCounts(): Promise<OrderCounts> {
+    return this.fetch<OrderCounts>('/orders/counts');
+  }
+
+  async getOrderDetails(orderId: string): Promise<OrderDetails> {
+    return this.fetch<OrderDetails>(`/orders/${orderId}`);
+  }
+
+  async getOrderEvents(orderId: string): Promise<OrderEvent[]> {
+    return this.fetch<OrderEvent[]>(`/orders/${orderId}/events`);
+  }
+
+  async updateOrderStatus(orderId: string, status: string): Promise<{ success: boolean; status: string }> {
+    return this.fetch(`/orders/${orderId}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status }),
+    });
+  }
+
+  // Recommendations endpoints
+  async getRecommendations(): Promise<Recommendation[]> {
+    return this.fetch<Recommendation[]>('/recommendations');
+  }
+
+  async approveRecommendation(recommendationId: string, approvedBy?: string): Promise<ApprovalResponse> {
+    return this.fetch<ApprovalResponse>(`/recommendations/${recommendationId}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ approvedBy: approvedBy || 'dashboard-user' }),
+    });
+  }
+
+  async dismissRecommendation(recommendationId: string, reason?: string): Promise<DismissResponse> {
+    return this.fetch<DismissResponse>(`/recommendations/${recommendationId}/dismiss`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: reason || 'Dismissed by operator' }),
+    });
+  }
+
+  async getResolvedRecommendations(limit?: number): Promise<Recommendation[]> {
+    const query = limit ? `?limit=${limit}` : '';
+    return this.fetch<Recommendation[]>(`/recommendations/resolved${query}`);
+  }
+
+  // Automated actions endpoints
+  async getAutomatedActions(limit?: number): Promise<AutomatedAction[]> {
+    const query = limit ? `?limit=${limit}` : '';
+    return this.fetch<AutomatedAction[]>(`/automated-actions${query}`);
+  }
 }
 
 // Generator types
@@ -200,6 +254,140 @@ export interface MLDeployResult {
   message?: string;
   error?: string;
   steps?: MLStep[];
+}
+
+// Order types
+export interface OrderSummary {
+  order_id: string;
+  customer_id: string;
+  customer_name: string;
+  tier: string;
+  order_date: string;
+  required_date: string;
+  status: string;
+  priority: string;
+  total_amount: number;
+  shipping_address: string;
+  notes: string;
+  line_count: number;
+}
+
+export interface OrderLine {
+  line_id: number;
+  sku: string;
+  product_name: string;
+  category: string;
+  quantity: number;
+  unit_price: number;
+  line_total: number;
+  qty_shipped: number;
+}
+
+export interface OrderEvent {
+  event_id: number;
+  event_type: string;
+  event_timestamp: string;
+  event_data: string | null;
+  created_by: string;
+  notes: string;
+}
+
+export interface OrderShipment {
+  shipment_id: string;
+  tracking_number: string;
+  status: string;
+  ship_date: string;
+  delivery_date: string;
+  origin_facility: string;
+  carrier_name: string;
+  service_type: string;
+  tracking_url_template: string;
+}
+
+export interface CustomerContract {
+  contract_id?: string;
+  contract_type: string;
+  priority_level: number;
+  discount_percent: number;
+  payment_terms: number;
+  credit_limit?: number;
+  valid_from?: string;
+  valid_to?: string;
+}
+
+export interface OrderDetails extends OrderSummary {
+  lines: OrderLine[];
+  events: OrderEvent[];
+  shipments: OrderShipment[];
+  contract: CustomerContract;
+}
+
+export interface OrderCounts {
+  counts: {
+    pending: number;
+    validated: number;
+    processing: number;
+    shipped: number;
+    delivered: number;
+  };
+  totalOrders: number;
+  totalActiveValue: number;
+}
+
+// Recommendation types
+export interface ReservedPart {
+  sku: string;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  reservationId: string;
+}
+
+export interface Recommendation {
+  recommendation_id: string;
+  equipment_id: string;
+  facility_id: string;
+  risk_level: string;
+  failure_probability: number;
+  probable_cause: string;
+  recommended_action: string;
+  recommended_parts: ReservedPart[] | string;
+  estimated_cost: number;
+  status: string;
+  created_at: string;
+  expires_at: string;
+  approved_at?: string;
+  approved_by?: string;
+  work_order_id?: string;
+  notes?: string;
+}
+
+export interface ApprovalResponse {
+  success: boolean;
+  workOrderId: string | null;
+  message: string;
+}
+
+export interface DismissResponse {
+  success: boolean;
+  message: string;
+}
+
+export interface AutomatedAction {
+  action_id: string;
+  event_id: string;
+  equipment_id: string;
+  facility_id: string;
+  action_type: string;
+  risk_level: string;
+  failure_probability: number;
+  probable_cause: string;
+  work_order_id: string;
+  parts_reserved: ReservedPart[] | string;
+  notification_sent: boolean;
+  status: string;
+  executed_at: string;
+  execution_summary: string;
 }
 
 export const titanApi = new TitanApi();

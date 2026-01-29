@@ -1,6 +1,7 @@
 package com.titan.generator.model;
 
 import java.time.Instant;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -15,6 +16,22 @@ public class EquipmentState {
     private DegradationPattern pattern = DegradationPattern.NORMAL;
     private Instant patternStartTime = Instant.now();
     private final AtomicInteger cycleCount = new AtomicInteger(0);
+
+    // Degradation cap: UNLIMITED (default), HIGH (cap before CRITICAL), NONE (no degradation)
+    private volatile String degradationCap = "UNLIMITED";
+
+    // Cycle caps for HIGH degradation level.
+    // Calibrated to land the ML model in the HIGH band (prob 0.5-0.69).
+    // Model uses all 11 features (6 sensors + trends + metadata); HIGH trend cap=0.05.
+    // At 10x speed (5s ticks, 10 cycles/tick), these trigger in ~25-35 seconds.
+    // At 1x speed, ~4-5 minutes.
+    private static final Map<DegradationPattern, Integer> HIGH_CYCLE_CAPS = Map.of(
+        DegradationPattern.BEARING_DEGRADATION, 45,
+        DegradationPattern.MOTOR_BURNOUT, 45,
+        DegradationPattern.SPINDLE_WEAR, 49,
+        DegradationPattern.COOLANT_FAILURE, 51,
+        DegradationPattern.ELECTRICAL_FAULT, 60
+    );
 
     // Original default baselines (never modified)
     private static final double DEFAULT_VIBRATION = 2.0;
@@ -76,8 +93,27 @@ public class EquipmentState {
     }
 
     public int incrementCycle() {
+        int effectiveMax = getEffectiveMaxCycles();
+        if (effectiveMax >= 0 && cycleCount.get() >= effectiveMax) {
+            return cycleCount.get(); // Capped — don't increment further
+        }
         return cycleCount.incrementAndGet();
     }
+
+    /** Resolve the actual cycle cap based on degradationCap + current pattern. */
+    private int getEffectiveMaxCycles() {
+        return switch (degradationCap) {
+            case "NONE" -> 0;
+            case "HIGH" -> HIGH_CYCLE_CAPS.getOrDefault(pattern, 60);
+            default -> -1; // UNLIMITED
+        };
+    }
+
+    public String getDegradationCap() { return degradationCap; }
+    public void setDegradationCap(String cap) { this.degradationCap = cap; }
+
+    /** @deprecated use getDegradationCap */
+    public int getMaxCycles() { return getEffectiveMaxCycles(); }
 
     // Getters and setters
     public String getEquipmentId() { return equipmentId; }

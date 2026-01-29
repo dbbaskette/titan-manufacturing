@@ -49,6 +49,9 @@ public class SensorDataGenerator {
     @Value("${generator.enabled:true}")
     private boolean generatorEnabled;
 
+    // Speed multiplier: 1x = normal (1 cycle per tick), 2x = 2 cycles per tick, etc.
+    private volatile int speedMultiplier = 1;
+
     // Thresholds for quality flags
     private static final double VIBRATION_WARNING = 3.5;
     private static final double VIBRATION_CRITICAL = 5.0;
@@ -96,13 +99,28 @@ public class SensorDataGenerator {
     public void generateReadings() {
         if (!generatorEnabled) return;
 
+        log.info("Generating readings for {} equipment (speed={}x, mqtt={}) START", equipmentStates.size(), speedMultiplier, mqttClient.isConnected());
+        int cycles = speedMultiplier;
         for (EquipmentState state : equipmentStates.values()) {
             try {
+                // At higher speeds, run multiple degradation cycles but only publish final values
+                for (int i = 0; i < cycles - 1; i++) {
+                    applyDegradationPattern(state);
+                    state.incrementCycle();
+                }
+                // Publish the final cycle's readings
                 generateAndPublish(state);
             } catch (Exception e) {
                 log.error("Error generating readings for {}: {}", state.getEquipmentId(), e.getMessage());
             }
         }
+        log.info("Generating readings DONE");
+    }
+
+    public int getSpeedMultiplier() { return speedMultiplier; }
+    public void setSpeedMultiplier(int multiplier) {
+        this.speedMultiplier = Math.max(1, Math.min(10, multiplier));
+        log.info("Speed multiplier set to {}x", this.speedMultiplier);
     }
 
     private void generateAndPublish(EquipmentState state) throws MqttException {
@@ -160,7 +178,11 @@ public class SensorDataGenerator {
      * Apply the equipment's degradation pattern to update sensor values.
      */
     private void applyDegradationPattern(EquipmentState state) {
-        double noise = ThreadLocalRandom.current().nextGaussian() * 0.1;
+        // When cycle-capped, amplify noise so sensors visibly fluctuate around the plateau
+        boolean capped = state.getDegradationCap().equals("HIGH") &&
+                         state.getPattern() != DegradationPattern.NORMAL &&
+                         state.getCycleCount() >= state.getMaxCycles();
+        double noise = ThreadLocalRandom.current().nextGaussian() * (capped ? 0.4 : 0.1);
         int cycles = state.getCycleCount();
 
         switch (state.getPattern()) {

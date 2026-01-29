@@ -58,6 +58,8 @@ export function SimulationControl() {
   const [error, setError] = useState<string | null>(null);
   const [selectedFacility, setSelectedFacility] = useState<string>('all');
   const [actionInProgress, setActionInProgress] = useState<string | null>(null);
+  const [degradationCaps, setDegradationCaps] = useState<Record<string, string>>({});
+  const [speedMultiplier, setSpeedMultiplier] = useState(1);
 
   // Fetch generator status and equipment
   const fetchData = async () => {
@@ -76,7 +78,17 @@ export function SimulationControl() {
 
       setStatus(statusData);
       setEquipment(sortEquipment(equipmentData));
+      if (statusData.speedMultiplier) setSpeedMultiplier(statusData.speedMultiplier);
       setError(null);
+
+      // Build degradation caps map from equipment data
+      const caps: Record<string, string> = {};
+      for (const eq of equipmentData) {
+        if (eq.degradationCap && eq.degradationCap !== 'UNLIMITED') {
+          caps[eq.equipmentId] = eq.degradationCap;
+        }
+      }
+      setDegradationCaps(caps);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to connect to generator');
     } finally {
@@ -180,6 +192,43 @@ export function SimulationControl() {
     }
   };
 
+  // Set degradation cap for a specific equipment (generator + scoring service)
+  const changeDegradationCap = async (equipmentId: string, cap: string) => {
+    try {
+      // Map degradation cap to scoring anomaly level:
+      // UNLIMITED → CRITICAL (score everything), HIGH → HIGH (cap trends), NONE → NONE
+      const anomalyLevel = cap === 'UNLIMITED' ? 'CRITICAL' : cap;
+
+      const [genRes] = await Promise.all([
+        fetch(`${GENERATOR_API}/equipment/${equipmentId}/degradation-cap?cap=${cap}`, { method: 'POST' }),
+        fetch(`http://localhost:8082/ml/anomaly-level?level=${anomalyLevel}&equipmentId=${equipmentId}`, { method: 'POST' }).catch(() => {}),
+      ]);
+      if (genRes.ok) {
+        setDegradationCaps((prev) => {
+          const next = { ...prev };
+          if (cap === 'UNLIMITED') delete next[equipmentId];
+          else next[equipmentId] = cap;
+          return next;
+        });
+      }
+    } catch (err) {
+      console.error('Failed to set degradation cap:', err);
+    }
+  };
+
+  // Set simulation speed multiplier
+  const changeSpeed = async (multiplier: number) => {
+    try {
+      const res = await fetch(`${GENERATOR_API}/speed?multiplier=${multiplier}`, { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        setSpeedMultiplier(data.speedMultiplier);
+      }
+    } catch (err) {
+      console.error('Failed to set speed:', err);
+    }
+  };
+
   // Adjust sensor value by delta
   const adjustSensor = async (equipmentId: string, deltas: {
     vibration?: number; temperature?: number; rpm?: number;
@@ -258,6 +307,23 @@ export function SimulationControl() {
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Speed control */}
+          <div className="flex items-center gap-1.5 bg-steel border border-iron/50 rounded-lg px-2 py-1">
+            <Zap size={14} className="text-slate" />
+            {[1, 2, 3, 5, 10].map((s) => (
+              <button
+                key={s}
+                onClick={() => changeSpeed(s)}
+                className={`px-2 py-0.5 rounded text-xs font-medium transition-all ${
+                  speedMultiplier === s
+                    ? 'bg-ember/20 text-ember border border-ember/30'
+                    : 'text-slate hover:text-white hover:bg-iron'
+                }`}
+              >
+                {s}x
+              </button>
+            ))}
+          </div>
           <button
             onClick={resetAll}
             disabled={actionInProgress === 'all'}
@@ -394,6 +460,7 @@ export function SimulationControl() {
                 <th className="text-center p-3 text-xs text-slate uppercase tracking-wider">Power</th>
                 <th className="text-center p-3 text-xs text-slate uppercase tracking-wider">Pressure</th>
                 <th className="text-center p-3 text-xs text-slate uppercase tracking-wider">Torque</th>
+                <th className="text-center p-3 text-xs text-slate uppercase tracking-wider">Agent</th>
                 <th className="text-right p-3 text-xs text-slate uppercase tracking-wider">Actions</th>
               </tr>
             </thead>
@@ -525,6 +592,28 @@ export function SimulationControl() {
                         <ChevronUp size={14} />
                       </button>
                     </div>
+                  </td>
+                  <td className="p-3 text-center">
+                    {(() => {
+                      const cap = degradationCaps[eq.equipmentId] || 'UNLIMITED';
+                      return (
+                        <select
+                          value={cap}
+                          onChange={(e) => changeDegradationCap(eq.equipmentId, e.target.value)}
+                          className={`bg-steel border rounded px-1.5 py-0.5 text-xs font-medium ${
+                            cap === 'UNLIMITED'
+                              ? 'border-critical/30 text-critical'
+                              : cap === 'HIGH'
+                                ? 'border-warning/30 text-warning'
+                                : 'border-slate/30 text-slate'
+                          }`}
+                        >
+                          <option value="UNLIMITED">CRIT+HIGH</option>
+                          <option value="HIGH">HIGH</option>
+                          <option value="NONE">Off</option>
+                        </select>
+                      );
+                    })()}
                   </td>
                   <td className="p-3 text-right">
                     <button
