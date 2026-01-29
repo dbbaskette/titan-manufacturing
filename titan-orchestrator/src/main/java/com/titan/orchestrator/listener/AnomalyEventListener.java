@@ -3,9 +3,12 @@ package com.titan.orchestrator.listener;
 import com.embabel.agent.api.invocation.AgentInvocation;
 import com.embabel.agent.core.AgentPlatform;
 import com.titan.orchestrator.model.AnomalyEvent;
+import com.titan.orchestrator.model.AnomalyEvent.CriticalAnomalyInput;
+import com.titan.orchestrator.model.AnomalyEvent.HighAnomalyInput;
 import com.titan.orchestrator.model.AnomalyResponse.CriticalAnomalyResponse;
 import com.titan.orchestrator.model.AnomalyResponse.HighAnomalyResponse;
 import com.titan.orchestrator.service.AutomatedActionService;
+import com.titan.orchestrator.service.NotificationService;
 import com.titan.orchestrator.service.RecommendationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,14 +29,17 @@ public class AnomalyEventListener {
     private final AgentPlatform agentPlatform;
     private final RecommendationService recommendationService;
     private final AutomatedActionService automatedActionService;
+    private final NotificationService notificationService;
 
     public AnomalyEventListener(
             AgentPlatform agentPlatform,
             RecommendationService recommendationService,
-            AutomatedActionService automatedActionService) {
+            AutomatedActionService automatedActionService,
+            NotificationService notificationService) {
         this.agentPlatform = agentPlatform;
         this.recommendationService = recommendationService;
         this.automatedActionService = automatedActionService;
+        this.notificationService = notificationService;
     }
 
     /**
@@ -63,10 +69,19 @@ public class AnomalyEventListener {
             // Invoke Embabel GOAP - the planner decides which MCP tools to call
             log.info(">>> Invoking Embabel agent for CRITICAL response goal...");
             var invocation = AgentInvocation.create(agentPlatform, CriticalAnomalyResponse.class);
-            CriticalAnomalyResponse result = invocation.invoke(event);
+            CriticalAnomalyResponse result = invocation.invoke(new CriticalAnomalyInput(event));
 
             // Record the automated action for audit trail
             String actionId = automatedActionService.record(event, result);
+
+            // Send notification deterministically (don't rely on LLM calling sendNotification)
+            notificationService.sendMaintenanceAlert(
+                    event.equipmentId(),
+                    event.facilityId(),
+                    event.prediction().probableCause(),
+                    event.prediction().failureProbability(),
+                    result.workOrderId()
+            );
 
             log.info("╔══════════════════════════════════════════════════════════════╗");
             log.info("║ CRITICAL RESPONSE COMPLETE                                   ║");
@@ -74,7 +89,7 @@ public class AnomalyEventListener {
             log.info("║ Action ID: {}                                  ", actionId);
             log.info("║ Work Order: {}                                 ", result.workOrderId());
             log.info("║ Parts Reserved: {}                             ", result.partsReserved() != null ? result.partsReserved().size() : 0);
-            log.info("║ Notification Sent: {}                          ", result.notificationSent());
+            log.info("║ Notification Sent: deterministic                             ║");
             log.info("╚══════════════════════════════════════════════════════════════╝");
 
         } catch (Exception e) {
@@ -107,7 +122,7 @@ public class AnomalyEventListener {
             // Invoke Embabel GOAP - the planner reserves parts and creates recommendation
             log.info(">>> Invoking Embabel agent for HIGH response goal...");
             var invocation = AgentInvocation.create(agentPlatform, HighAnomalyResponse.class);
-            HighAnomalyResponse result = invocation.invoke(event);
+            HighAnomalyResponse result = invocation.invoke(new HighAnomalyInput(event));
 
             // Create recommendation record for dashboard
             String recommendationId = recommendationService.create(event, result);

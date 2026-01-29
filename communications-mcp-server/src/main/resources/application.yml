@@ -11,12 +11,38 @@ spring:
     password: ${GREENPLUM_PASSWORD:VMware1!}
     driver-class-name: org.postgresql.Driver
 
+  mail:
+    host: ${SMTP_HOST:smtp.gmail.com}
+    port: ${SMTP_PORT:587}
+    username: ${SMTP_USER:}
+    password: ${SMTP_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+
   ai:
+    openai:
+      api-key: ${OPENAI_API_KEY:ollama}
+      base-url: ${OPENAI_BASE_URL:http://localhost:11434}
+      chat:
+        options:
+          model: ${OPENAI_MODEL:llama3.1:8b}
+          temperature: ${OPENAI_TEMPERATURE:0.7}
     mcp:
       server:
         name: titan-communications-tools
         version: 1.0.0
         type: SYNC
+        protocol: STATELESS
+        stateless:
+          mcp-endpoint: /mcp
+
+titan:
+  admin-email: ${TITAN_ADMIN_EMAIL:}
+  from-email: ${TITAN_FROM_EMAIL:}
 
 management:
   endpoints:
@@ -26,6 +52,9 @@ management:
   endpoint:
     health:
       show-details: always
+  health:
+    mail:
+      enabled: false
 
 logging:
   level:

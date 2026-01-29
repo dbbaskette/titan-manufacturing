@@ -26,4 +26,14 @@ public record AnomalyEvent(
         double torqueAvg,
         String scoredAt
     ) {}
+
+    /**
+     * Wrapper to distinguish CRITICAL anomaly input for GOAP planning.
+     */
+    public record CriticalAnomalyInput(AnomalyEvent event) {}
+
+    /**
+     * Wrapper to distinguish HIGH anomaly input for GOAP planning.
+     */
+    public record HighAnomalyInput(AnomalyEvent event) {}
 }

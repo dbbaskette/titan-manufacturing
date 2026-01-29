@@ -18,6 +18,7 @@ import {
   Zap,
   Brain,
 } from 'lucide-react';
+import { SettingsPanel } from './Settings';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -40,6 +41,7 @@ const NAV_ITEMS = [
 
 export function Layout({ children, currentView, onViewChange }: LayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [time, setTime] = useState(new Date());
 
   // Update time every second
@@ -96,7 +98,10 @@ export function Layout({ children, currentView, onViewChange }: LayoutProps) {
           </div>
 
           {/* Settings */}
-          <button className="p-2 hover:bg-steel rounded-lg transition-colors text-slate hover:text-white">
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className="p-2 hover:bg-steel rounded-lg transition-colors text-slate hover:text-white"
+          >
             <Settings size={18} />
           </button>
         </div>
@@ -150,6 +155,9 @@ export function Layout({ children, currentView, onViewChange }: LayoutProps) {
           <div className="p-6">{children}</div>
         </main>
       </div>
+
+      {/* Settings Panel */}
+      <SettingsPanel isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 }
