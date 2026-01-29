@@ -608,13 +608,20 @@ flowchart LR
 
 ### Degradation Patterns
 
-The sensor data generator simulates realistic failure patterns:
-- `NORMAL` - Baseline healthy operation
-- `BEARING_DEGRADATION` - Vibration trending up (Phoenix Incident)
-- `MOTOR_BURNOUT` - Temperature spike pattern
-- `SPINDLE_WEAR` - RPM variance increase
-- `COOLANT_FAILURE` - Pressure drop pattern
-- `ELECTRICAL_FAULT` - Power draw anomalies
+The sensor data generator simulates realistic failure patterns calibrated against the PMML logistic regression model. Each pattern's degradation rates and cycle caps are tuned so the model scores in the HIGH band (probability 0.5–0.7) when capped.
+
+| Pattern | Primary Sensors | Key Rates (per cycle) | HIGH Cap | Demo Signature |
+|---------|----------------|----------------------|----------|----------------|
+| `NORMAL` | All stable | Gaussian noise only | — | Baseline healthy operation |
+| `BEARING_DEGRADATION` | Vibration ↑, Temperature ↑ | vib +0.035, temp follows vib×6 | 70 cycles | Phoenix Incident — vibration 2→4.5 mm/s |
+| `MOTOR_BURNOUT` | Temperature ↑, Power ↑, RPM ↓ | temp +0.35°C, power +0.12 kW, RPM −18 | 80 cycles | Temperature 50→78°C, motor overheating |
+| `SPINDLE_WEAR` | RPM ↓, Vibration ↑, Torque ↑ | RPM −20, vib +0.04, torque +0.1 | 90 cycles | RPM 8500→6700, spindle wobble |
+| `COOLANT_FAILURE` | Temperature ↑, Pressure ↓ | temp +0.25°C, pressure −0.045 bar | 100 cycles | Pressure 6.0→1.5 bar, thermal runaway |
+| `ELECTRICAL_FAULT` | Power ↑, RPM ↓, Vibration ↑ | power +0.15 kW, RPM −25, vib +0.03 | 85 cycles | Erratic power spikes to 30+ kW |
+
+**Cycle timing**: At 1x speed (5s ticks), patterns reach HIGH cap in 6–8 minutes. At 10x speed, 40–60 seconds.
+
+**Calibration basis**: Model coefficients — `vibration_trend_rate` (106.2), `rpm_normalized` (−57.6), `pressure_normalized` (−54.6), `vibration_normalized` (44.2), `temperature_trend_rate` (42.6), `temperature_normalized` (28.7). Degradation rates push normalized features far enough from baseline to shift the logit by ~24 points.
 
 ---
 

@@ -21,16 +21,18 @@ public class EquipmentState {
     private volatile String degradationCap = "UNLIMITED";
 
     // Cycle caps for HIGH degradation level.
-    // Calibrated to land the ML model in the HIGH band (prob 0.5-0.69).
-    // Model uses all 11 features (6 sensors + trends + metadata); HIGH trend cap=0.05.
-    // At 10x speed (5s ticks, 10 cycles/tick), these trigger in ~25-35 seconds.
-    // At 1x speed, ~4-5 minutes.
+    // Calibrated against the PMML logistic regression model (intercept=20.5, vibration_trend=106,
+    // rpm_norm=-57.6, pressure_norm=-54.6, vibration_norm=44.2, temp_trend=42.6, temp_norm=28.7).
+    // Target: enough cycles so sensor averages + trends push logit to ~0.5-0.7 probability.
+    // Each pattern needs different cycles because degradation rates per cycle vary.
+    // At 10x speed (5s ticks, 10 cycles/tick): ~40-60 seconds to reach HIGH.
+    // At 1x speed: ~6-8 minutes.
     private static final Map<DegradationPattern, Integer> HIGH_CYCLE_CAPS = Map.of(
-        DegradationPattern.BEARING_DEGRADATION, 45,
-        DegradationPattern.MOTOR_BURNOUT, 45,
-        DegradationPattern.SPINDLE_WEAR, 49,
-        DegradationPattern.COOLANT_FAILURE, 51,
-        DegradationPattern.ELECTRICAL_FAULT, 60
+        DegradationPattern.BEARING_DEGRADATION, 70,
+        DegradationPattern.MOTOR_BURNOUT, 80,
+        DegradationPattern.SPINDLE_WEAR, 90,
+        DegradationPattern.COOLANT_FAILURE, 100,
+        DegradationPattern.ELECTRICAL_FAULT, 85
     );
 
     // Original default baselines (never modified)

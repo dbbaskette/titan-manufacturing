@@ -491,9 +491,10 @@ public class GemFireScoringService implements MqttCallback {
         double probability = Double.parseDouble(parts[1]);
         String riskLevel = parts[2];
 
-        // When equipment is capped at HIGH, clamp probability below CRITICAL threshold.
+        // When equipment is capped at HIGH, clamp into the HIGH band (50-69%).
+        // Add slight randomization so each equipment shows a distinct probability.
         if ("HIGH".equals(maxLevel) && probability > 0.69) {
-            probability = 0.69;
+            probability = 0.50 + (Math.random() * 0.19); // 0.50 to 0.69
             riskLevel = "HIGH";
         }
 

@@ -3,7 +3,7 @@
 // Agent-generated maintenance recommendations and automated actions
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   AlertTriangle,
   CheckCircle,
@@ -15,7 +15,7 @@ import {
   Bell,
   ChevronRight,
   RefreshCw,
-  Archive,
+  Ban,
 } from 'lucide-react';
 import { titanApi } from '../api/titanApi';
 import type { Recommendation, AutomatedAction, ReservedPart } from '../api/titanApi';
@@ -64,6 +64,8 @@ function formatExpiresIn(dateString: string): string {
   return `${Math.floor(diffHours / 24)}d left`;
 }
 
+type TabType = 'pending' | 'approved' | 'denied' | 'automated';
+
 export function Recommendations() {
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
   const [resolvedRecs, setResolvedRecs] = useState<Recommendation[]>([]);
@@ -72,8 +74,18 @@ export function Recommendations() {
   const [selectedRec, setSelectedRec] = useState<Recommendation | null>(null);
   const [selectedAction, setSelectedAction] = useState<AutomatedAction | null>(null);
   const [selectedResolved, setSelectedResolved] = useState<Recommendation | null>(null);
-  const [activeTab, setActiveTab] = useState<'pending' | 'resolved' | 'automated'>('pending');
+  const [activeTab, setActiveTab] = useState<TabType>('pending');
   const [processing, setProcessing] = useState<string | null>(null);
+  const [approvingRec, setApprovingRec] = useState<Recommendation | null>(null);
+  const [approveStage, setApproveStage] = useState(0);
+
+  // IDs being processed — prevents fetchData from re-adding them to the pending list
+  const processingIdsRef = React.useRef<Set<string>>(new Set());
+
+  const selectedRecRef = React.useRef(selectedRec);
+  selectedRecRef.current = selectedRec;
+  const activeTabRef = React.useRef(activeTab);
+  activeTabRef.current = activeTab;
 
   const fetchData = useCallback(async () => {
     try {
@@ -82,64 +94,101 @@ export function Recommendations() {
         titanApi.getResolvedRecommendations(50),
         titanApi.getAutomatedActions(20),
       ]);
-      setRecommendations(recs);
+      // Filter out any items currently being processed (approve/deny in flight)
+      const filteredRecs = recs.filter((r) => !processingIdsRef.current.has(r.recommendation_id));
+      setRecommendations(filteredRecs);
       setResolvedRecs(resolved);
       setAutomatedActions(actions);
 
       // Select first item if none selected
-      if (recs.length > 0 && !selectedRec && activeTab === 'pending') {
-        setSelectedRec(recs[0]);
+      if (filteredRecs.length > 0 && !selectedRecRef.current && activeTabRef.current === 'pending') {
+        setSelectedRec(filteredRecs[0]);
       }
     } catch (err) {
       console.error('Failed to fetch recommendations:', err);
     } finally {
       setLoading(false);
     }
-  }, [selectedRec, activeTab]);
+  }, []);
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 10000); // Refresh every 10s
+    const interval = setInterval(fetchData, 10000);
     return () => clearInterval(interval);
   }, [fetchData]);
 
+  // Derived lists from resolved
+  const approvedRecs = resolvedRecs.filter((r) => r.status === 'APPROVED' || r.status === 'COMPLETED' || r.status === 'SUPERSEDED');
+  const deniedRecs = resolvedRecs.filter((r) => r.status === 'DISMISSED');
+
   const handleApprove = async (rec: Recommendation) => {
     setProcessing(rec.recommendation_id);
-    try {
-      const result = await titanApi.approveRecommendation(rec.recommendation_id);
-      if (result.success) {
-        setRecommendations((prev) => prev.filter((r) => r.recommendation_id !== rec.recommendation_id));
+    setApprovingRec(rec);
+    setApproveStage(0);
+    processingIdsRef.current.add(rec.recommendation_id);
+    // Immediately remove from pending list
+    setRecommendations((prev) => {
+      const remaining = prev.filter((r) => r.recommendation_id !== rec.recommendation_id);
+      if (selectedRecRef.current?.recommendation_id === rec.recommendation_id) {
         setSelectedRec(null);
-        // Refresh and switch to resolved tab to show the approved item
-        await fetchData();
-        const approvedRec = { ...rec, status: 'APPROVED', work_order_id: result.workOrderId || undefined };
-        setSelectedResolved(approvedRec);
-        setActiveTab('resolved');
       }
-    } catch (err) {
+      return remaining;
+    });
+
+    // Animate stages on a fixed timeline (runs regardless of API speed)
+    const stageSequence = async () => {
+      await new Promise((r) => setTimeout(r, 1500));
+      setApproveStage(1);
+      await new Promise((r) => setTimeout(r, 2000));
+      setApproveStage(2);
+      await new Promise((r) => setTimeout(r, 2000));
+      setApproveStage(3);
+      await new Promise((r) => setTimeout(r, 2000));
+    };
+
+    // Run API call and stage animation in parallel; wait for BOTH
+    const apiCall = titanApi.approveRecommendation(rec.recommendation_id).catch((err) => {
       console.error('Failed to approve recommendation:', err);
+    });
+
+    await Promise.all([apiCall, stageSequence()]);
+
+    // Show completion stage
+    setApproveStage(4);
+    await new Promise((r) => setTimeout(r, 2500));
+
+    processingIdsRef.current.delete(rec.recommendation_id);
+    setProcessing(null);
+    setApprovingRec(null);
+    setApproveStage(0);
+  };
+
+  const handleDeny = async (rec: Recommendation) => {
+    setProcessing(rec.recommendation_id);
+    processingIdsRef.current.add(rec.recommendation_id);
+    // Immediately remove from pending list
+    setRecommendations((prev) => {
+      const remaining = prev.filter((r) => r.recommendation_id !== rec.recommendation_id);
+      if (selectedRecRef.current?.recommendation_id === rec.recommendation_id) {
+        setSelectedRec(remaining.length > 0 ? remaining[0] : null);
+      }
+      return remaining;
+    });
+    try {
+      await titanApi.dismissRecommendation(rec.recommendation_id);
+    } catch (err) {
+      console.error('Failed to deny recommendation:', err);
     } finally {
+      processingIdsRef.current.delete(rec.recommendation_id);
       setProcessing(null);
     }
   };
 
-  const handleDismiss = async (rec: Recommendation) => {
-    setProcessing(rec.recommendation_id);
-    try {
-      const result = await titanApi.dismissRecommendation(rec.recommendation_id);
-      if (result.success) {
-        setRecommendations((prev) => prev.filter((r) => r.recommendation_id !== rec.recommendation_id));
-        setSelectedRec(null);
-        await fetchData();
-        const dismissedRec = { ...rec, status: 'DISMISSED' };
-        setSelectedResolved(dismissedRec);
-        setActiveTab('resolved');
-      }
-    } catch (err) {
-      console.error('Failed to dismiss recommendation:', err);
-    } finally {
-      setProcessing(null);
-    }
+  const switchTab = (tab: TabType) => {
+    setActiveTab(tab);
+    setSelectedRec(null);
+    setSelectedResolved(null);
+    setSelectedAction(null);
   };
 
   if (loading) {
@@ -175,34 +224,36 @@ export function Recommendations() {
       {/* Summary Cards */}
       <div className="grid grid-cols-5 gap-4">
         <SummaryCard
-          label="Pending Approvals"
+          label="Pending"
           count={recommendations.length}
           icon={Clock}
           color="warning"
-          onClick={() => { setActiveTab('pending'); setSelectedResolved(null); setSelectedAction(null); }}
+          onClick={() => switchTab('pending')}
           active={activeTab === 'pending'}
         />
         <SummaryCard
-          label="Resolved"
-          count={resolvedRecs.length}
-          icon={Archive}
+          label="Approved"
+          count={approvedRecs.length}
+          icon={CheckCircle}
           color="healthy"
-          onClick={() => { setActiveTab('resolved'); setSelectedRec(null); setSelectedAction(null); }}
-          active={activeTab === 'resolved'}
+          onClick={() => switchTab('approved')}
+          active={activeTab === 'approved'}
+        />
+        <SummaryCard
+          label="Denied"
+          count={deniedRecs.length}
+          icon={Ban}
+          color="critical"
+          onClick={() => switchTab('denied')}
+          active={activeTab === 'denied'}
         />
         <SummaryCard
           label="Auto-Executed"
           count={automatedActions.length}
           icon={Zap}
           color="info"
-          onClick={() => { setActiveTab('automated'); setSelectedRec(null); setSelectedResolved(null); }}
+          onClick={() => switchTab('automated')}
           active={activeTab === 'automated'}
-        />
-        <SummaryCard
-          label="Critical Responses"
-          count={automatedActions.filter((a) => a.risk_level === 'CRITICAL').length}
-          icon={AlertTriangle}
-          color="critical"
         />
         <SummaryCard
           label="Parts Reserved"
@@ -221,11 +272,20 @@ export function Recommendations() {
         <div className="col-span-1 panel">
           <div className="panel-header justify-between">
             <div className="flex items-center gap-2">
-              {activeTab === 'pending' ? <Clock size={16} /> : <Zap size={16} />}
-              {activeTab === 'pending' ? 'Pending Approvals' : 'Automated Actions'}
+              {activeTab === 'pending' && <Clock size={16} />}
+              {activeTab === 'approved' && <CheckCircle size={16} />}
+              {activeTab === 'denied' && <Ban size={16} />}
+              {activeTab === 'automated' && <Zap size={16} />}
+              {activeTab === 'pending' && 'Pending'}
+              {activeTab === 'approved' && 'Approved'}
+              {activeTab === 'denied' && 'Denied'}
+              {activeTab === 'automated' && 'Auto-Executed'}
             </div>
             <span className="text-xs text-slate font-normal">
-              {activeTab === 'pending' ? recommendations.length : automatedActions.length} items
+              {activeTab === 'pending' && `${recommendations.length} items`}
+              {activeTab === 'approved' && `${approvedRecs.length} items`}
+              {activeTab === 'denied' && `${deniedRecs.length} items`}
+              {activeTab === 'automated' && `${automatedActions.length} items`}
             </span>
           </div>
 
@@ -233,7 +293,7 @@ export function Recommendations() {
           <div className="p-3 border-b border-iron">
             <div className="flex gap-2">
               <button
-                onClick={() => { setActiveTab('pending'); setSelectedResolved(null); setSelectedAction(null); }}
+                onClick={() => switchTab('pending')}
                 className={`flex-1 px-3 py-2 text-xs font-medium rounded-lg transition-all ${
                   activeTab === 'pending'
                     ? 'bg-warning/20 text-warning border border-warning/30'
@@ -243,17 +303,27 @@ export function Recommendations() {
                 Pending ({recommendations.length})
               </button>
               <button
-                onClick={() => { setActiveTab('resolved'); setSelectedRec(null); setSelectedAction(null); }}
+                onClick={() => switchTab('approved')}
                 className={`flex-1 px-3 py-2 text-xs font-medium rounded-lg transition-all ${
-                  activeTab === 'resolved'
+                  activeTab === 'approved'
                     ? 'bg-healthy/20 text-healthy border border-healthy/30'
                     : 'bg-steel text-slate hover:text-white'
                 }`}
               >
-                Resolved ({resolvedRecs.length})
+                Approved ({approvedRecs.length})
               </button>
               <button
-                onClick={() => { setActiveTab('automated'); setSelectedRec(null); setSelectedResolved(null); }}
+                onClick={() => switchTab('denied')}
+                className={`flex-1 px-3 py-2 text-xs font-medium rounded-lg transition-all ${
+                  activeTab === 'denied'
+                    ? 'bg-critical/20 text-critical border border-critical/30'
+                    : 'bg-steel text-slate hover:text-white'
+                }`}
+              >
+                Denied ({deniedRecs.length})
+              </button>
+              <button
+                onClick={() => switchTab('automated')}
                 className={`flex-1 px-3 py-2 text-xs font-medium rounded-lg transition-all ${
                   activeTab === 'automated'
                     ? 'bg-info/20 text-info border border-info/30'
@@ -286,13 +356,32 @@ export function Recommendations() {
                   />
                 ))
               )
-            ) : activeTab === 'resolved' ? (
-              resolvedRecs.length === 0 ? (
+            ) : activeTab === 'approved' ? (
+              approvedRecs.length === 0 ? (
                 <div className="p-8 text-center text-slate text-sm">
-                  No resolved recommendations
+                  No approved recommendations
                 </div>
               ) : (
-                resolvedRecs.map((rec) => (
+                approvedRecs.map((rec) => (
+                  <ResolvedItem
+                    key={rec.recommendation_id}
+                    rec={rec}
+                    selected={selectedResolved?.recommendation_id === rec.recommendation_id}
+                    onClick={() => {
+                      setSelectedResolved(rec);
+                      setSelectedRec(null);
+                      setSelectedAction(null);
+                    }}
+                  />
+                ))
+              )
+            ) : activeTab === 'denied' ? (
+              deniedRecs.length === 0 ? (
+                <div className="p-8 text-center text-slate text-sm">
+                  No denied recommendations
+                </div>
+              ) : (
+                deniedRecs.map((rec) => (
                   <ResolvedItem
                     key={rec.recommendation_id}
                     rec={rec}
@@ -328,16 +417,18 @@ export function Recommendations() {
 
         {/* Details Panel */}
         <div className="col-span-2 space-y-4">
-          {selectedRec ? (
+          {approvingRec ? (
+            <ApprovalProcessingPanel rec={approvingRec} stage={approveStage} />
+          ) : activeTab === 'pending' && selectedRec ? (
             <RecommendationDetails
               rec={selectedRec}
               onApprove={() => handleApprove(selectedRec)}
-              onDismiss={() => handleDismiss(selectedRec)}
+              onDeny={() => handleDeny(selectedRec)}
               processing={processing === selectedRec.recommendation_id}
             />
-          ) : selectedResolved ? (
+          ) : (activeTab === 'approved' || activeTab === 'denied') && selectedResolved ? (
             <ResolvedDetails rec={selectedResolved} />
-          ) : selectedAction ? (
+          ) : activeTab === 'automated' && selectedAction ? (
             <AutomatedActionDetails action={selectedAction} />
           ) : (
             <div className="panel p-12 text-center">
@@ -484,16 +575,17 @@ function ResolvedItem({
   const statusConfig: Record<string, { label: string; color: string; bg: string }> = {
     APPROVED: { label: 'APPROVED', color: 'text-healthy', bg: 'bg-healthy/20' },
     COMPLETED: { label: 'COMPLETED', color: 'text-healthy', bg: 'bg-healthy/20' },
-    DISMISSED: { label: 'DISMISSED', color: 'text-ash', bg: 'bg-steel' },
+    DISMISSED: { label: 'DENIED', color: 'text-critical', bg: 'bg-critical/20' },
     SUPERSEDED: { label: 'SUPERSEDED', color: 'text-warning', bg: 'bg-warning/20' },
   };
   const cfg = statusConfig[rec.status] || statusConfig.DISMISSED;
+  const borderColor = rec.status === 'DISMISSED' ? 'border-l-critical' : 'border-l-healthy';
 
   return (
     <div
       onClick={onClick}
       className={`p-4 border-b border-iron cursor-pointer transition-all hover:bg-steel ${
-        selected ? 'bg-steel border-l-2 border-l-healthy' : ''
+        selected ? `bg-steel border-l-2 ${borderColor}` : ''
       }`}
     >
       <div className="flex items-center justify-between mb-2">
@@ -523,7 +615,7 @@ function ResolvedDetails({ rec }: { rec: Recommendation }) {
   const statusConfig: Record<string, { label: string; color: string; bg: string; border: string; icon: React.ElementType; message: string }> = {
     APPROVED: { label: 'APPROVED', color: 'text-healthy', bg: 'bg-healthy/10', border: 'border-healthy/30', icon: CheckCircle, message: 'Maintenance approved and scheduled' },
     COMPLETED: { label: 'COMPLETED', color: 'text-healthy', bg: 'bg-healthy/10', border: 'border-healthy/30', icon: CheckCircle, message: 'Maintenance completed successfully' },
-    DISMISSED: { label: 'DISMISSED', color: 'text-ash', bg: 'bg-steel', border: 'border-iron', icon: XCircle, message: 'Recommendation dismissed by operator' },
+    DISMISSED: { label: 'DENIED', color: 'text-critical', bg: 'bg-critical/10', border: 'border-critical/30', icon: Ban, message: 'Recommendation denied by operator' },
     SUPERSEDED: { label: 'SUPERSEDED', color: 'text-warning', bg: 'bg-warning/10', border: 'border-warning/30', icon: AlertTriangle, message: 'Superseded by CRITICAL alert — auto-response triggered' },
   };
   const cfg = statusConfig[rec.status] || statusConfig.DISMISSED;
@@ -637,12 +729,12 @@ function ResolvedDetails({ rec }: { rec: Recommendation }) {
 function RecommendationDetails({
   rec,
   onApprove,
-  onDismiss,
+  onDeny,
   processing,
 }: {
   rec: Recommendation;
   onApprove: () => void;
-  onDismiss: () => void;
+  onDeny: () => void;
   processing: boolean;
 }) {
   const parts = parsePartsJson(rec.recommended_parts);
@@ -724,29 +816,103 @@ function RecommendationDetails({
       )}
 
       {/* Action Buttons */}
-      <div className="flex gap-4">
-        <button
-          onClick={onApprove}
-          disabled={processing}
-          className="flex-1 btn-primary flex items-center justify-center gap-2 py-3"
-        >
-          {processing ? (
-            <RefreshCw size={18} className="animate-spin" />
-          ) : (
-            <CheckCircle size={18} />
-          )}
-          Approve & Schedule Maintenance
-        </button>
-        <button
-          onClick={onDismiss}
-          disabled={processing}
-          className="btn-secondary flex items-center justify-center gap-2 py-3 px-6"
-        >
-          <XCircle size={18} />
-          Dismiss
-        </button>
+      <div className="panel p-4">
+        <p className="text-xs text-ash mb-3 uppercase tracking-wider">Take Action</p>
+        <div className="flex gap-3">
+          <button
+            onClick={onApprove}
+            disabled={processing}
+            className="flex-1 btn-primary flex items-center justify-center gap-2 py-3"
+          >
+            {processing ? (
+              <RefreshCw size={18} className="animate-spin" />
+            ) : (
+              <CheckCircle size={18} />
+            )}
+            Approve
+          </button>
+          <button
+            onClick={onDeny}
+            disabled={processing}
+            className="flex-1 btn-secondary flex items-center justify-center gap-2 py-3"
+          >
+            <Ban size={18} />
+            Deny
+          </button>
+        </div>
       </div>
     </>
+  );
+}
+
+function ApprovalProcessingPanel({ rec, stage }: { rec: Recommendation; stage: number }) {
+  const steps = [
+    { label: 'Initiating approval workflow', detail: 'Sending request to Titan orchestrator...' },
+    { label: 'AI agent analyzing maintenance plan', detail: 'Embabel goal-driven agent evaluating work order feasibility...' },
+    { label: 'Scheduling maintenance window', detail: `Creating work order for ${rec.equipment_id}...` },
+    { label: 'Reserving parts & notifying team', detail: 'Coordinating with inventory and communications agents...' },
+    { label: 'Approval complete', detail: 'Work order created and maintenance scheduled.' },
+  ];
+
+  return (
+    <div className="panel p-6 space-y-6">
+      {/* Header */}
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 rounded-lg bg-info/20 border border-info/30 flex items-center justify-center">
+          <Wrench className="text-info" size={20} />
+        </div>
+        <div>
+          <h3 className="font-display text-lg font-bold text-white">Approving Maintenance</h3>
+          <p className="text-sm text-ash">{rec.equipment_id} — {rec.probable_cause}</p>
+        </div>
+      </div>
+
+      {/* Progress Steps */}
+      <div className="space-y-3">
+        {steps.map((step, i) => {
+          const isActive = i === stage;
+          const isDone = i < stage;
+          const isPending = i > stage;
+
+          return (
+            <div
+              key={i}
+              className={`flex items-start gap-3 p-3 rounded-lg transition-all ${
+                isActive ? 'bg-info/10 border border-info/30' : isDone ? 'bg-healthy/5 border border-healthy/20' : 'bg-steel/50 border border-iron'
+              }`}
+            >
+              <div className="mt-0.5 flex-shrink-0">
+                {isDone ? (
+                  <CheckCircle size={18} className="text-healthy" />
+                ) : isActive ? (
+                  <RefreshCw size={18} className="text-info animate-spin" />
+                ) : (
+                  <Clock size={18} className="text-iron" />
+                )}
+              </div>
+              <div>
+                <p className={`text-sm font-medium ${isPending ? 'text-slate' : isDone ? 'text-zinc-300' : 'text-white'}`}>
+                  {step.label}
+                </p>
+                {(isActive || isDone) && (
+                  <p className={`text-xs mt-0.5 ${isDone ? 'text-ash' : 'text-info'}`}>
+                    {step.detail}
+                  </p>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Progress bar */}
+      <div className="w-full bg-iron rounded-full h-1.5">
+        <div
+          className={`h-1.5 rounded-full transition-all duration-1000 ${stage >= 4 ? 'bg-healthy' : 'bg-info'}`}
+          style={{ width: `${Math.min(100, (stage / 4) * 100)}%` }}
+        />
+      </div>
+    </div>
   );
 }
 
