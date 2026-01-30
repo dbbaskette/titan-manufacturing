@@ -467,6 +467,44 @@ flowchart LR
 - **HIGH (≥50%)**: Creates a recommendation with reserved parts, awaiting human approval via the dashboard
 - **Approval**: When a human approves a HIGH recommendation, it triggers the same CRITICAL chain
 
+### GOAP Anomaly Resolution Chain
+
+```mermaid
+flowchart TD
+    INPUT([CriticalAnomalyInput]) --> DIAG
+
+    DIAG["diagnoseAnomaly<br/><sub>maintenance-tools · LLM</sub>"]
+    DIAG --> FDIAG[/"FaultDiagnosis"/]
+    FDIAG --> URGENCY
+
+    URGENCY["assessUrgency<br/><sub>pure logic</sub>"]
+    URGENCY -->|IMMEDIATE| IMM[/"ImmediateUrgency"/]
+    URGENCY -->|DEFERRABLE| DEF[/"DeferrableUrgency"/]
+
+    IMM --> SHUTDOWN["emergencyShutdown<br/><sub>sensor-tools · LLM</sub>"]
+    SHUTDOWN --> SHUT_CONF[/"ShutdownConfirmation"/]
+    SHUT_CONF --> PARTS_A["assessParts<br/><sub>inventory-tools · LLM</sub>"]
+    DEF --> PARTS_B["assessParts<br/><sub>inventory-tools · LLM</sub>"]
+
+    PARTS_A --> BRANCH2{Parts?}
+    PARTS_B --> BRANCH2
+
+    BRANCH2 -->|Available| SCHED_L["scheduleWithLocalParts<br/><sub>maintenance-tools · LLM</sub>"]
+    BRANCH2 -->|Unavailable| PROCURE["procureCrossFacility<br/><sub>logistics-tools · LLM</sub>"]
+    PROCURE --> SCHED_P["scheduleWithProcuredParts<br/><sub>maintenance-tools · LLM</sub>"]
+
+    SCHED_L --> ORDER[/"MaintenanceOrder"/]
+    SCHED_P --> ORDER
+
+    ORDER --> COMPLY{"Regulated?"}
+    COMPLY -->|Yes| VERIFY["verifyCompliance<br/><sub>governance-tools · LLM</sub>"]
+    COMPLY -->|No| FIN_STD["finalizeStandard<br/><sub>pure logic</sub>"]
+    VERIFY --> FIN_REG["finalizeWithCompliance<br/><sub>pure logic</sub>"]
+
+    FIN_STD --> OUTPUT([CriticalAnomalyResponse])
+    FIN_REG --> OUTPUT
+```
+
 ### Equipment Parts Compatibility
 
 The `equipment_parts_compatibility` table (102 rows) links 7 equipment models to specific replacement parts by fault type. The `get_compatible_parts` MCP tool uses this matrix so the agent finds model-specific parts rather than guessing from a diagnosis string.
