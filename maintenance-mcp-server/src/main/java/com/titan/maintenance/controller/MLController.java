@@ -113,6 +113,39 @@ public class MLController {
     }
 
     /**
+     * Get anomaly levels: default + per-equipment overrides.
+     */
+    @GetMapping("/anomaly-level")
+    public Map<String, Object> getAnomalyLevels() {
+        return Map.of(
+            "defaultLevel", scoringService.getDefaultAnomalyLevel(),
+            "equipmentLevels", scoringService.getAllAnomalyLevels()
+        );
+    }
+
+    /**
+     * Set anomaly level for a specific equipment, or the default.
+     * Values: CRITICAL (publish all), HIGH (only HIGH, suppress CRITICAL), NONE (disable all).
+     */
+    @PostMapping("/anomaly-level")
+    public Map<String, Object> setAnomalyLevel(
+            @RequestParam String level,
+            @RequestParam(required = false) String equipmentId) {
+        if (!List.of("CRITICAL", "HIGH", "NONE").contains(level)) {
+            return Map.of("success", false, "error", "Invalid level. Must be CRITICAL, HIGH, or NONE");
+        }
+        if (equipmentId != null && !equipmentId.isEmpty()) {
+            scoringService.setAnomalyLevel(equipmentId, level);
+            log.info("Anomaly level for {} set to {} via API", equipmentId, level);
+            return Map.of("success", true, "equipmentId", equipmentId, "level", level);
+        } else {
+            scoringService.setDefaultAnomalyLevel(level);
+            log.info("Default anomaly level set to {} via API", level);
+            return Map.of("success", true, "defaultLevel", level);
+        }
+    }
+
+    /**
      * Clear all sensor windows and GemFire predictions.
      * Called after a simulation reset to flush stale data from the scoring pipeline.
      */

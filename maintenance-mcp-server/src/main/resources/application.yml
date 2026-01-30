@@ -9,6 +9,11 @@ spring:
     username: ${GREENPLUM_USER:gpadmin}
     password: ${GREENPLUM_PASSWORD:VMware1!}
     driver-class-name: org.postgresql.Driver
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:titan}
+    password: ${RABBITMQ_PASS:titan5.0}
   ai:
     mcp:
       server:
@@ -47,6 +52,11 @@ gemfire:
   locator:
     host: ${GEMFIRE_LOCATOR_HOST:localhost}
     port: ${GEMFIRE_LOCATOR_PORT:10334}
+
+anomaly:
+  exchange: titan.anomaly
+  critical-routing-key: anomaly.critical
+  high-routing-key: anomaly.high
 
 management:
   endpoints:

@@ -85,8 +85,37 @@ public class GemFireService {
         return sensorPredictionsRegion;
     }
 
+    public Region<String, String> getPmmlModelsRegion() {
+        ensureConnected();
+        return pmmlModelsRegion;
+    }
+
     public boolean isConnected() {
         return clientCache != null && !clientCache.isClosed();
+    }
+
+    public ClientCache getClientCache() {
+        ensureConnected();
+        return clientCache;
+    }
+
+    /**
+     * Force-close and re-create the GemFire client cache.
+     * Call this when the pool is open but operations consistently fail.
+     */
+    public void reconnect() {
+        log.info("Forcing GemFire reconnect...");
+        try {
+            if (clientCache != null && !clientCache.isClosed()) {
+                clientCache.close();
+            }
+        } catch (Exception e) {
+            log.debug("Error closing stale cache: {}", e.getMessage());
+        }
+        clientCache = null;
+        pmmlModelsRegion = null;
+        sensorPredictionsRegion = null;
+        initialize();
     }
 
     /**
