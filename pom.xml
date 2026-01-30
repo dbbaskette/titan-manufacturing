@@ -22,6 +22,7 @@
         <module>order-mcp-server</module>
         <module>communications-mcp-server</module>
         <module>governance-mcp-server</module>
+        <module>gemfire-scoring-function</module>
     </modules>
 
     <properties>

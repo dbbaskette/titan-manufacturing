@@ -1,6 +1,7 @@
 package com.titan.generator.model;
 
 import java.time.Instant;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
@@ -15,6 +16,24 @@ public class EquipmentState {
     private DegradationPattern pattern = DegradationPattern.NORMAL;
     private Instant patternStartTime = Instant.now();
     private final AtomicInteger cycleCount = new AtomicInteger(0);
+
+    // Degradation cap: UNLIMITED (default), HIGH (cap before CRITICAL), NONE (no degradation)
+    private volatile String degradationCap = "UNLIMITED";
+
+    // Cycle caps for HIGH degradation level.
+    // Calibrated against the PMML logistic regression model (intercept=20.5, vibration_trend=106,
+    // rpm_norm=-57.6, pressure_norm=-54.6, vibration_norm=44.2, temp_trend=42.6, temp_norm=28.7).
+    // Target: enough cycles so sensor averages + trends push logit to ~0.5-0.7 probability.
+    // Each pattern needs different cycles because degradation rates per cycle vary.
+    // At 10x speed (5s ticks, 10 cycles/tick): ~40-60 seconds to reach HIGH.
+    // At 1x speed: ~6-8 minutes.
+    private static final Map<DegradationPattern, Integer> HIGH_CYCLE_CAPS = Map.of(
+        DegradationPattern.BEARING_DEGRADATION, 70,
+        DegradationPattern.MOTOR_BURNOUT, 80,
+        DegradationPattern.SPINDLE_WEAR, 90,
+        DegradationPattern.COOLANT_FAILURE, 100,
+        DegradationPattern.ELECTRICAL_FAULT, 85
+    );
 
     // Original default baselines (never modified)
     private static final double DEFAULT_VIBRATION = 2.0;
@@ -76,8 +95,27 @@ public class EquipmentState {
     }
 
     public int incrementCycle() {
+        int effectiveMax = getEffectiveMaxCycles();
+        if (effectiveMax >= 0 && cycleCount.get() >= effectiveMax) {
+            return cycleCount.get(); // Capped — don't increment further
+        }
         return cycleCount.incrementAndGet();
     }
+
+    /** Resolve the actual cycle cap based on degradationCap + current pattern. */
+    private int getEffectiveMaxCycles() {
+        return switch (degradationCap) {
+            case "NONE" -> 0;
+            case "HIGH" -> HIGH_CYCLE_CAPS.getOrDefault(pattern, 60);
+            default -> -1; // UNLIMITED
+        };
+    }
+
+    public String getDegradationCap() { return degradationCap; }
+    public void setDegradationCap(String cap) { this.degradationCap = cap; }
+
+    /** @deprecated use getDegradationCap */
+    public int getMaxCycles() { return getEffectiveMaxCycles(); }
 
     // Getters and setters
     public String getEquipmentId() { return equipmentId; }

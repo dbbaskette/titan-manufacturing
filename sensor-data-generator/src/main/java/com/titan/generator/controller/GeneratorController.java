@@ -42,8 +42,19 @@ public class GeneratorController {
         return Map.of(
             "enabled", generator.isEnabled(),
             "equipmentCount", generator.getEquipmentStates().size(),
-            "patterns", DegradationPattern.values()
+            "patterns", DegradationPattern.values(),
+            "speedMultiplier", generator.getSpeedMultiplier()
         );
+    }
+
+    /**
+     * Set simulation speed multiplier (1-10x).
+     * Higher values run multiple degradation cycles per tick for faster progression.
+     */
+    @PostMapping("/speed")
+    public Map<String, Object> setSpeed(@RequestParam int multiplier) {
+        generator.setSpeedMultiplier(multiplier);
+        return Map.of("speedMultiplier", generator.getSpeedMultiplier());
     }
 
     /**
@@ -76,6 +87,7 @@ public class GeneratorController {
                 m.put("power", state.getCurrentPower());
                 m.put("pressure", state.getCurrentPressure());
                 m.put("torque", state.getCurrentTorque());
+                m.put("degradationCap", state.getDegradationCap());
                 return m;
             })
             .toList();
@@ -235,6 +247,35 @@ public class GeneratorController {
             "vibration", state.getCurrentVibration(),
             "temperature", state.getCurrentTemperature(),
             "message", "Sensor values adjusted"
+        ));
+    }
+
+    /**
+     * Set degradation cap for equipment.
+     * Values: UNLIMITED (default), HIGH (cap before CRITICAL), NONE (disable degradation).
+     * Cycle limits are pattern-specific so the ML model naturally scores within the desired band.
+     */
+    @PostMapping("/equipment/{equipmentId}/degradation-cap")
+    public ResponseEntity<Map<String, Object>> setDegradationCap(
+            @PathVariable String equipmentId,
+            @RequestParam String cap) {
+
+        EquipmentState state = generator.getEquipmentStates().get(equipmentId);
+        if (state == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        if (!List.of("UNLIMITED", "HIGH", "NONE").contains(cap)) {
+            return ResponseEntity.badRequest().body(Map.of(
+                "error", "Invalid cap. Must be UNLIMITED, HIGH, or NONE"));
+        }
+
+        state.setDegradationCap(cap);
+        log.info("Set degradationCap={} for {}", cap, equipmentId);
+
+        return ResponseEntity.ok(Map.of(
+            "equipmentId", equipmentId,
+            "degradationCap", cap
         ));
     }
 

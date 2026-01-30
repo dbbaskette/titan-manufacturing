@@ -3,7 +3,7 @@
 // Layered Detection: Threshold Alerts + ML Predictions
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import {
   LineChart,
   Line,
@@ -26,8 +26,8 @@ import {
 import type { GeneratorEquipment } from '../utils/equipmentUtils';
 import { titanApi } from '../api/titanApi';
 import type { MLPrediction, MLPredictionsData } from '../api/titanApi';
-
-const SENSOR_API_URL = 'http://localhost:8081/api/sensors';
+import { useSensorData } from '../context/SensorDataContext';
+import type { SensorData } from '../context/SensorDataContext';
 
 // ── Threshold Constants ─────────────────────────────────────────────────
 const THRESHOLDS = {
@@ -50,16 +50,6 @@ function worstLevel(a: ThresholdLevel, b: ThresholdLevel): ThresholdLevel {
   return order[a] >= order[b] ? a : b;
 }
 
-interface SensorData {
-  ts: number; // epoch ms — used as X-axis domain value
-  temperature: number;
-  vibration: number;
-  power: number;
-  spindle_speed: number;
-  pressure: number;
-  torque: number;
-}
-
 /** Format epoch ms → "HH:MM:SS" for axis tick labels and tooltip */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function formatTime(ts: any): string {
@@ -67,43 +57,25 @@ function formatTime(ts: any): string {
   return d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
-/** Max data points to keep (2s interval × 60 = 2 minutes of data) */
-const MAX_POINTS = 60;
-
 /** Sliding window duration in ms (2 minutes) */
 const CHART_WINDOW_MS = 2 * 60 * 1000;
 
-interface SensorReading {
-  equipmentId: string;
-  sensorType: string;
-  value: number;
-  unit: string;
-  timestamp: string;
-  qualityFlag: string;
-}
-
-// Track latest values per equipment for sidebar threshold coloring
-const latestValuesCache = new Map<string, { vibration: number; temperature: number }>();
-
-// Cache sensor data per equipment so it persists when navigating away
-const sensorDataCache = new Map<string, SensorData[]>();
-
 export function SensorMonitor() {
+  const sensorService = useSensorData();
+
   // Equipment state
   const [equipmentList, setEquipmentList] = useState<GeneratorEquipment[]>([]);
   const [equipmentLoading, setEquipmentLoading] = useState(true);
   const [expandedFacilities, setExpandedFacilities] = useState<Set<string>>(new Set(['PHX']));
   const [selectedEquipmentId, setSelectedEquipmentId] = useState<string>('');
 
-  // Sensor data state
+  // Sensor data from background service
   const [sensorData, setSensorData] = useState<SensorData[]>([]);
   const [isLive, setIsLive] = useState(true);
-  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'connecting' | 'disconnected'>('disconnected');
-  const eventSourceRef = useRef<EventSource | null>(null);
-  const latestReadingsRef = useRef<Map<string, SensorReading>>(new Map());
-  const connectionStatusRef = useRef<'connected' | 'connecting' | 'disconnected'>('disconnected');
-  const currentEquipmentRef = useRef<string>('');
-  const sensorDataRef = useRef<SensorData[]>([]);
+  const previousEquipmentRef = useRef<string>('');
+
+  // Derive connection status from data flow
+  const connectionStatus = sensorData.length > 0 && isLive ? 'connected' : isLive && selectedEquipmentId ? 'connecting' : 'disconnected';
 
   // ML Predictions state
   const [mlPredictions, setMlPredictions] = useState<MLPredictionsData | null>(null);
@@ -123,18 +95,12 @@ export function SensorMonitor() {
         const data = await fetchGeneratorEquipment();
         if (cancelled) return;
         setEquipmentList(data);
-        // Sync latestValuesCache from generator so sidebar updates immediately after reset.
-        // Also clear stale chart cache for equipment that returned to normal baselines.
+        // Sync latestValues from generator so sidebar updates immediately after reset.
         for (const eq of data) {
-          const prev = latestValuesCache.get(eq.equipmentId);
-          latestValuesCache.set(eq.equipmentId, {
+          sensorService.latestValues.set(eq.equipmentId, {
             vibration: eq.vibration,
             temperature: eq.temperature,
           });
-          // If values dropped significantly (reset happened), flush chart cache
-          if (prev && (prev.vibration - eq.vibration > 1.0 || prev.temperature - eq.temperature > 10)) {
-            sensorDataCache.delete(eq.equipmentId);
-          }
         }
         // Auto-select only on first load — prefer first Phoenix CNC (matches demo docs)
         if (!hasSelectedRef.current && data.length > 0) {
@@ -169,130 +135,29 @@ export function SensorMonitor() {
     return () => { cancelled = true; clearInterval(interval); };
   }, []);
 
-  // Convert SSE readings to chart data point
-  const createDataPointFromReadings = useCallback((readings: Map<string, SensorReading>): SensorData | null => {
-    const temp = readings.get('temperature');
-    const vib = readings.get('vibration');
-    const pwr = readings.get('power') || readings.get('power_draw');
-    const rpm = readings.get('spindle_speed');
-    const pres = readings.get('pressure');
-    const torq = readings.get('torque');
-
-    if (!temp && !vib && !pwr && !rpm && !pres && !torq) return null;
-
-    // Cache latest values for sidebar coloring
-    const eqId = temp?.equipmentId || vib?.equipmentId || pwr?.equipmentId || rpm?.equipmentId;
-    if (eqId) {
-      latestValuesCache.set(eqId, {
-        vibration: vib?.value ?? 2.2,
-        temperature: temp?.value ?? 68,
-      });
-    }
-
-    return {
-      ts: Date.now(),
-      temperature: temp?.value ?? 68,
-      vibration: vib?.value ?? 2.2,
-      power: pwr?.value ?? 42,
-      spindle_speed: rpm?.value ?? 12000,
-      pressure: pres?.value ?? 6.0,
-      torque: torq?.value ?? 45,
-    };
-  }, []);
-
-  // Connect to SSE stream
+  // Subscribe to background sensor service and sync data
   useEffect(() => {
     if (!selectedEquipmentId) return;
 
-    if (!isLive) {
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-        eventSourceRef.current = null;
-      }
-      setConnectionStatus('disconnected');
-      connectionStatusRef.current = 'disconnected';
-      return;
-    }
+    // Subscribe to SSE via background service (persists across navigation)
+    sensorService.subscribe(selectedEquipmentId);
 
-    // Save current data to cache SYNCHRONOUSLY before switching equipment
-    if (currentEquipmentRef.current !== selectedEquipmentId) {
-      if (sensorDataRef.current.length > 0) {
-        sensorDataCache.set(currentEquipmentRef.current, [...sensorDataRef.current]);
-      }
-      currentEquipmentRef.current = selectedEquipmentId;
-    }
+    // Load any cached data immediately
+    setSensorData(sensorService.getData(selectedEquipmentId));
 
-    // Restore from cache if available, otherwise start fresh
-    const cachedData = sensorDataCache.get(selectedEquipmentId);
-    const initialData = cachedData ? [...cachedData] : [];
-    setSensorData(initialData);
-    sensorDataRef.current = initialData;
-
-    setConnectionStatus('connecting');
-    connectionStatusRef.current = 'connecting';
-
-    // Close existing connection
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-    }
-
-    const url = `${SENSOR_API_URL}/stream?equipmentId=${selectedEquipmentId}`;
-    const eventSource = new EventSource(url);
-    eventSourceRef.current = eventSource;
-
-    eventSource.onopen = () => {
-      setConnectionStatus('connected');
-      connectionStatusRef.current = 'connected';
-    };
-
-    eventSource.addEventListener('sensor-reading', (event) => {
-      try {
-        const reading: SensorReading = JSON.parse(event.data);
-        if (reading.equipmentId === selectedEquipmentId) {
-          latestReadingsRef.current.set(reading.sensorType, reading);
-          if (connectionStatusRef.current !== 'connected') {
-            setConnectionStatus('connected');
-            connectionStatusRef.current = 'connected';
-          }
-        }
-      } catch (e) {
-        console.error('Error parsing SSE data:', e);
-      }
+    // Listen for live updates
+    const unsub = sensorService.onData(selectedEquipmentId, (data) => {
+      if (isLive) setSensorData(data);
     });
 
-    eventSource.addEventListener('connected', () => {
-      setConnectionStatus('connected');
-      connectionStatusRef.current = 'connected';
-    });
-
-    eventSource.onerror = () => {
-      if (eventSource.readyState === EventSource.CLOSED) {
-        setConnectionStatus('disconnected');
-        connectionStatusRef.current = 'disconnected';
-      }
-    };
-
-    // Update chart with real readings and keep ref/cache in sync
-    const interval = setInterval(() => {
-      const newPoint = createDataPointFromReadings(latestReadingsRef.current);
-      if (newPoint && connectionStatusRef.current === 'connected') {
-        setSensorData((prev) => {
-          const updated = [...prev, newPoint];
-          const trimmed = updated.length > MAX_POINTS ? updated.slice(-MAX_POINTS) : updated;
-          sensorDataRef.current = trimmed;
-          sensorDataCache.set(selectedEquipmentId, trimmed);
-          return trimmed;
-        });
-      }
-    }, 2000);
+    // Track previous equipment (subscription stays alive in background)
+    previousEquipmentRef.current = selectedEquipmentId;
 
     return () => {
-      clearInterval(interval);
-      eventSource.close();
-      eventSourceRef.current = null;
-      latestReadingsRef.current.clear();
+      unsub();
+      // Don't unsubscribe — keep background connection running
     };
-  }, [selectedEquipmentId, isLive, createDataPointFromReadings]);
+  }, [selectedEquipmentId, isLive, sensorService]);
 
   // ── X-axis sliding window: current time at right edge ────────────────
   const xDomain: [number, number] = sensorData.length > 0
@@ -344,7 +209,7 @@ export function SensorMonitor() {
 
   // Helper: get sidebar status for an equipment from cached values or ML predictions
   function getEquipmentSidebarStatus(eqId: string): { dotClass: string; label?: string } {
-    const cached = latestValuesCache.get(eqId);
+    const cached = sensorService.latestValues.get(eqId);
     const pred = mlPredictions?.success
       ? mlPredictions.predictions.find(p => p.equipmentId === eqId)
       : undefined;

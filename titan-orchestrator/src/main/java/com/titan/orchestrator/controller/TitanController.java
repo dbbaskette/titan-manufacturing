@@ -36,6 +36,9 @@ public class TitanController {
     @Value("${titan.generator.url:http://localhost:8090}")
     private String generatorUrl;
 
+    @Value("${titan.order.url:http://localhost:8085}")
+    private String orderUrl;
+
     public TitanController(AgentPlatform agentPlatform) {
         this.agentPlatform = agentPlatform;
     }
@@ -121,6 +124,61 @@ public class TitanController {
             log.error("Generator proxy GET /equipment failed: {}", e.getMessage());
             return ResponseEntity.internalServerError().body("{\"error\":\"" + e.getMessage() + "\"}");
         }
+    }
+
+    // ── Order Endpoints (proxy to order-mcp-server) ─────────────────────────
+
+    @GetMapping("/orders")
+    public ResponseEntity<String> getOrders() {
+        return proxyOrderGet("/orders");
+    }
+
+    @GetMapping("/orders/counts")
+    public ResponseEntity<String> getOrderCounts() {
+        return proxyOrderGet("/orders/counts");
+    }
+
+    @GetMapping("/orders/{orderId}")
+    public ResponseEntity<String> getOrderDetails(@PathVariable String orderId) {
+        return proxyOrderGet("/orders/" + orderId);
+    }
+
+    @GetMapping("/orders/{orderId}/events")
+    public ResponseEntity<String> getOrderEvents(@PathVariable String orderId) {
+        return proxyOrderGet("/orders/" + orderId + "/events");
+    }
+
+    @PatchMapping("/orders/{orderId}/status")
+    public ResponseEntity<String> updateOrderStatus(@PathVariable String orderId, @RequestBody String body) {
+        try {
+            org.springframework.http.HttpEntity<String> entity = new org.springframework.http.HttpEntity<>(
+                body, createJsonHeaders());
+            ResponseEntity<String> response = restTemplate.exchange(
+                orderUrl + "/orders/" + orderId + "/status",
+                org.springframework.http.HttpMethod.PATCH,
+                entity,
+                String.class);
+            return ResponseEntity.ok().header("Content-Type", "application/json").body(response.getBody());
+        } catch (Exception e) {
+            log.error("Order proxy PATCH /orders/{}/status failed: {}", orderId, e.getMessage());
+            return ResponseEntity.internalServerError().body("{\"error\":\"" + e.getMessage() + "\"}");
+        }
+    }
+
+    private ResponseEntity<String> proxyOrderGet(String path) {
+        try {
+            String body = restTemplate.getForObject(orderUrl + path, String.class);
+            return ResponseEntity.ok().header("Content-Type", "application/json").body(body);
+        } catch (Exception e) {
+            log.error("Order proxy GET {} failed: {}", path, e.getMessage());
+            return ResponseEntity.internalServerError().body("{\"error\":\"" + e.getMessage() + "\"}");
+        }
+    }
+
+    private org.springframework.http.HttpHeaders createJsonHeaders() {
+        org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+        headers.setContentType(org.springframework.http.MediaType.APPLICATION_JSON);
+        return headers;
     }
 
     /**

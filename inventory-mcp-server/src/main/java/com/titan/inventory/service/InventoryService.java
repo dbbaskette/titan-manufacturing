@@ -374,6 +374,87 @@ public class InventoryService {
         );
     }
 
+    @McpTool(description = "Find compatible replacement parts for a specific equipment ID based on fault type. " +
+            "Looks up the equipment's type and model, then returns parts from the compatibility matrix " +
+            "with current stock levels. Use this instead of searchProducts when you know the equipment ID and fault type.")
+    public List<CompatiblePart> getCompatibleParts(
+        @McpToolParam(description = "Equipment ID (e.g., ATL-CNC-001, PHX-CNC-007)") String equipmentId,
+        @McpToolParam(description = "Fault type: BEARING, MOTOR, SPINDLE, COOLANT, ELECTRICAL. Determines which part roles to return.") String faultType
+    ) {
+        log.info(">>> getCompatibleParts called for equipment: {}, fault: {}", equipmentId, faultType);
+
+        // Look up equipment type, model, and facility
+        Map<String, Object> equipment;
+        try {
+            equipment = jdbcTemplate.queryForMap(
+                "SELECT type, model, facility_id FROM equipment WHERE equipment_id = ?",
+                equipmentId
+            );
+        } catch (Exception e) {
+            log.warn("Equipment not found: {}", equipmentId);
+            return List.of();
+        }
+
+        String eqType = (String) equipment.get("type");
+        String eqModel = (String) equipment.get("model");
+        String facilityId = (String) equipment.get("facility_id");
+
+        // Map fault type to part roles
+        List<String> roles = switch (faultType != null ? faultType.toUpperCase() : "") {
+            case "BEARING" -> List.of("spindle_bearing", "ball_screw_bearing", "spindle_seal");
+            case "MOTOR" -> List.of("spindle_motor", "motor_controller", "encoder", "contactor", "overload_relay");
+            case "SPINDLE" -> List.of("spindle_cartridge", "spindle_drawbar", "spindle_seal", "spindle_bearing");
+            case "COOLANT" -> List.of("coolant_pump", "coolant_pump_hp", "coolant_filter", "coolant_sensor", "coolant_chiller");
+            case "ELECTRICAL" -> List.of("motor_controller", "power_supply", "circuit_breaker", "surge_protector", "emc_filter");
+            default -> List.of("spindle_bearing", "spindle_motor", "motor_controller", "spindle_cartridge",
+                               "coolant_pump", "circuit_breaker");
+        };
+
+        // Build role IN clause
+        String roleParams = String.join(",", roles.stream().map(r -> "?").toList());
+
+        String sql = """
+            SELECT c.sku, p.name, c.part_role, c.is_primary, c.notes, p.category, p.unit_price,
+                   COALESCE(sf.quantity, 0) as stock_at_facility,
+                   COALESCE(st.total, 0) as total_stock
+            FROM equipment_parts_compatibility c
+            JOIN products p ON c.sku = p.sku
+            LEFT JOIN stock_levels sf ON c.sku = sf.sku AND sf.facility_id = ?
+            LEFT JOIN (SELECT sku, SUM(quantity) as total FROM stock_levels GROUP BY sku) st ON c.sku = st.sku
+            WHERE c.equipment_type = ?
+              AND (c.equipment_model = ? OR c.equipment_model IS NULL)
+              AND c.part_role IN (%s)
+            ORDER BY c.is_primary DESC, c.part_role, p.unit_price
+            """.formatted(roleParams);
+
+        List<Object> params = new ArrayList<>();
+        params.add(facilityId);
+        params.add(eqType);
+        params.add(eqModel);
+        params.addAll(roles);
+
+        List<CompatiblePart> results = jdbcTemplate.query(sql, (rs, rowNum) -> {
+            int localStock = rs.getInt("stock_at_facility");
+            String status = localStock == 0 ? "OUT_OF_STOCK" : (localStock <= 2 ? "LOW_STOCK" : "IN_STOCK");
+            return new CompatiblePart(
+                rs.getString("sku"),
+                rs.getString("name"),
+                rs.getString("part_role"),
+                rs.getBoolean("is_primary"),
+                rs.getString("notes"),
+                rs.getString("category"),
+                rs.getBigDecimal("unit_price"),
+                localStock,
+                rs.getInt("total_stock"),
+                status
+            );
+        }, params.toArray());
+
+        log.info("<<< getCompatibleParts returning {} parts for {} ({} {}), fault={}",
+                 results.size(), equipmentId, eqType, eqModel, faultType);
+        return results;
+    }
+
     private double estimateDailyDemand(String sku) {
         // In a real system, this would analyze historical order data
         // For now, return a reasonable default based on product type

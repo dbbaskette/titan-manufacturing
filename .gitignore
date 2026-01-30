@@ -32,6 +32,9 @@ node_modules/
 dist/
 .npm/
 
+# Audit/working docs
+AUDIT-CHECKLIST.md
+
 # Build artifacts
 *.jar
 !.mvn/wrapper/*.jar

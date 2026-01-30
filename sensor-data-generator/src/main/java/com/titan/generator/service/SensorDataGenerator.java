@@ -49,6 +49,9 @@ public class SensorDataGenerator {
     @Value("${generator.enabled:true}")
     private boolean generatorEnabled;
 
+    // Speed multiplier: 1x = normal (1 cycle per tick), 2x = 2 cycles per tick, etc.
+    private volatile int speedMultiplier = 1;
+
     // Thresholds for quality flags
     private static final double VIBRATION_WARNING = 3.5;
     private static final double VIBRATION_CRITICAL = 5.0;
@@ -96,13 +99,28 @@ public class SensorDataGenerator {
     public void generateReadings() {
         if (!generatorEnabled) return;
 
+        log.info("Generating readings for {} equipment (speed={}x, mqtt={}) START", equipmentStates.size(), speedMultiplier, mqttClient.isConnected());
+        int cycles = speedMultiplier;
         for (EquipmentState state : equipmentStates.values()) {
             try {
+                // At higher speeds, run multiple degradation cycles but only publish final values
+                for (int i = 0; i < cycles - 1; i++) {
+                    applyDegradationPattern(state);
+                    state.incrementCycle();
+                }
+                // Publish the final cycle's readings
                 generateAndPublish(state);
             } catch (Exception e) {
                 log.error("Error generating readings for {}: {}", state.getEquipmentId(), e.getMessage());
             }
         }
+        log.info("Generating readings DONE");
+    }
+
+    public int getSpeedMultiplier() { return speedMultiplier; }
+    public void setSpeedMultiplier(int multiplier) {
+        this.speedMultiplier = Math.max(1, Math.min(10, multiplier));
+        log.info("Speed multiplier set to {}x", this.speedMultiplier);
     }
 
     private void generateAndPublish(EquipmentState state) throws MqttException {
@@ -160,7 +178,11 @@ public class SensorDataGenerator {
      * Apply the equipment's degradation pattern to update sensor values.
      */
     private void applyDegradationPattern(EquipmentState state) {
-        double noise = ThreadLocalRandom.current().nextGaussian() * 0.1;
+        // When cycle-capped, amplify noise so sensors visibly fluctuate around the plateau
+        boolean capped = state.getDegradationCap().equals("HIGH") &&
+                         state.getPattern() != DegradationPattern.NORMAL &&
+                         state.getCycleCount() >= state.getMaxCycles();
+        double noise = ThreadLocalRandom.current().nextGaussian() * (capped ? 0.4 : 0.1);
         int cycles = state.getCycleCount();
 
         switch (state.getPattern()) {
@@ -175,12 +197,12 @@ public class SensorDataGenerator {
 
     private void applyNormalPattern(EquipmentState state, double noise) {
         // Increased noise multipliers for more visible "alive" fluctuations
-        state.setCurrentVibration(state.getVibrationBaseline() + noise * 1.5);
-        state.setCurrentTemperature(state.getTemperatureBaseline() + noise * 8);
-        state.setCurrentRpm(state.getRpmBaseline() + noise * 200);
-        state.setCurrentTorque(state.getTorqueBaseline() + noise * 8);
-        state.setCurrentPressure(state.getPressureBaseline() + noise * 0.8);
-        state.setCurrentPower(state.getPowerBaseline() + noise * 4);
+        state.setCurrentVibration(Math.max(0, state.getVibrationBaseline() + noise * 1.5));
+        state.setCurrentTemperature(Math.max(0, state.getTemperatureBaseline() + noise * 8));
+        state.setCurrentRpm(Math.max(0, state.getRpmBaseline() + noise * 200));
+        state.setCurrentTorque(Math.max(0, state.getTorqueBaseline() + noise * 8));
+        state.setCurrentPressure(Math.max(0, state.getPressureBaseline() + noise * 0.8));
+        state.setCurrentPower(Math.max(0, state.getPowerBaseline() + noise * 4));
     }
 
     /**
@@ -203,7 +225,7 @@ public class SensorDataGenerator {
         state.setCurrentTemperature(Math.min(temp, 95.0));
 
         // RPM drops as bearing degrades
-        state.setCurrentRpm(state.getRpmBaseline() - (cycles * 2) + noise * 30);
+        state.setCurrentRpm(Math.max(3000, state.getRpmBaseline() - (cycles * 2) + noise * 30));
 
         // Torque increases as bearing drags
         state.setCurrentTorque(state.getTorqueBaseline() + (cycles * 0.05) + noise * 1.5);
@@ -246,40 +268,44 @@ public class SensorDataGenerator {
      * Demo-tuned: noticeable RPM drop in ~1 minute
      */
     private void applySpindleWear(EquipmentState state, double noise, int cycles) {
-        // RPM gradually decreases - 10 rpm per cycle
-        // From 8500 baseline, drops to ~8000 in 50 cycles (~4.2 min)
-        state.setCurrentRpm(Math.max(state.getRpmBaseline() - (cycles * 10) + noise * 50, 5000));
+        // RPM gradually decreases — model coeff for rpm_normalized is -57.6
+        // From 8500 baseline: at 90 cycles, RPM = 8500 - 1800 = 6700 → rpm_norm=0.67 (was 0.85)
+        // Delta to logit: -57.6 * (0.67 - 0.85) = +10.4
+        state.setCurrentRpm(Math.max(state.getRpmBaseline() - (cycles * 20) + noise * 50, 5000));
 
-        // Vibration gradually increases - warning at 3.5
-        state.setCurrentVibration(state.getVibrationBaseline() + (cycles * 0.03) + noise * 0.5);
+        // Vibration increases as spindle wobbles — coeff 44.2
+        // At 90 cycles: vib = 2.0 + 3.6 = 5.6 → vib_norm=1.0 (capped), delta = 44.2*(1.0-0.4) = +26.5
+        state.setCurrentVibration(Math.min(state.getVibrationBaseline() + (cycles * 0.04) + noise * 0.5, 7.0));
 
-        // Temperature slightly elevated from friction
-        state.setCurrentTemperature(state.getTemperatureBaseline() + (cycles * 0.05) + noise * 2);
+        // Temperature elevated from friction — coeff 28.7
+        state.setCurrentTemperature(state.getTemperatureBaseline() + (cycles * 0.12) + noise * 2);
 
         // Torque becomes inconsistent with random spikes
         double torqueSpike = ThreadLocalRandom.current().nextDouble() > 0.8 ? 3 : 0;
-        state.setCurrentTorque(state.getTorqueBaseline() + (cycles * 0.07) + torqueSpike + noise * 3);
+        state.setCurrentTorque(state.getTorqueBaseline() + (cycles * 0.1) + torqueSpike + noise * 3);
 
-        state.setCurrentPower(state.getPowerBaseline() + (cycles * 0.02) + noise);
+        state.setCurrentPower(state.getPowerBaseline() + (cycles * 0.03) + noise);
         state.setCurrentPressure(state.getPressureBaseline() + noise * 0.2);
     }
 
     private void applyCoolantFailure(EquipmentState state, double noise, int cycles) {
-        // Temperature rises due to cooling inefficiency - 0.18°C per cycle
-        // At 5s intervals: ~2°C/min, reaches warning (70°C) in ~5.5 min from 50°C baseline
+        // Temperature rises due to cooling inefficiency — coeff 28.7
+        // At 100 cycles: temp = 50 + 25 = 75°C → temp_norm=0.88 (was 0.59), delta = +8.3
         state.setCurrentTemperature(Math.min(
-            state.getTemperatureBaseline() + (cycles * 0.18) + noise * 3,
+            state.getTemperatureBaseline() + (cycles * 0.25) + noise * 3,
             95.0  // Cap at critical
         ));
 
-        // Pressure drops - 0.035 bar per cycle
-        state.setCurrentPressure(Math.max(state.getPressureBaseline() - (cycles * 0.035), 1.0));
+        // Pressure drops — coeff -54.6 (lower pressure = higher logit)
+        // At 100 cycles: pressure = 6.0 - 4.5 = 1.5 → pres_norm=0.15 (was 0.6), delta = +24.6
+        state.setCurrentPressure(Math.max(state.getPressureBaseline() - (cycles * 0.045), 1.0));
 
-        // Slight vibration increase from thermal expansion
-        state.setCurrentVibration(state.getVibrationBaseline() + (cycles * 0.008) + noise * 0.5);
+        // Vibration increase from thermal expansion — coeff 44.2
+        // At 100 cycles: vib = 2.0 + 2.0 = 4.0 → vib_norm=0.8 (was 0.4), delta = +17.7
+        state.setCurrentVibration(state.getVibrationBaseline() + (cycles * 0.02) + noise * 0.5);
         state.setCurrentRpm(state.getRpmBaseline() + noise * 30);
         state.setCurrentTorque(state.getTorqueBaseline() + (cycles * 0.02) + noise * 2);
-        state.setCurrentPower(state.getPowerBaseline() + (cycles * 0.01) + noise);
+        state.setCurrentPower(state.getPowerBaseline() + (cycles * 0.02) + noise);
     }
 
     /**
@@ -287,23 +313,25 @@ public class SensorDataGenerator {
      * Demo-tuned: immediately visible erratic behavior
      */
     private void applyElectricalFault(EquipmentState state, double noise, int cycles) {
-        // Power consumption surges — motor drawing excess current
+        // Power consumption surges — coeff -7.1 (but visually dramatic)
         double powerSpike = ThreadLocalRandom.current().nextDouble() > 0.6 ? 8 : 0;
-        state.setCurrentPower(state.getPowerBaseline() + (cycles * 0.12) + noise * 5 + powerSpike);
+        state.setCurrentPower(Math.min(50.0, state.getPowerBaseline() + (cycles * 0.15) + noise * 5 + powerSpike));
 
-        // RPM drops — motor struggling to convert power to mechanical output
-        double rpmDrop = cycles * 15;  // progressive drop
+        // RPM drops — coeff -57.6 (lower RPM = higher logit)
+        // At 85 cycles: RPM = 8500 - 2125 = 6375 → rpm_norm=0.64, delta = +12.1
+        double rpmDrop = cycles * 25;
         double erraticFactor = ThreadLocalRandom.current().nextDouble() > 0.7 ? 3 : 1;
         state.setCurrentRpm(Math.max(3000, state.getRpmBaseline() - rpmDrop + noise * 200 * erraticFactor));
 
-        // Vibration rises from electrical interference
-        state.setCurrentVibration(state.getVibrationBaseline() + (cycles * 0.015) + noise * 1.5 * erraticFactor);
-        // Temperature climbs from inefficiency
-        state.setCurrentTemperature(state.getTemperatureBaseline() + (cycles * 0.06) + noise * 5);
+        // Vibration rises from electrical interference — coeff 44.2
+        // At 85 cycles: vib = 2.0 + 2.6 = 4.6 → vib_norm=0.92, delta = +23.0
+        state.setCurrentVibration(state.getVibrationBaseline() + (cycles * 0.03) + noise * 1.5 * erraticFactor);
+        // Temperature climbs from inefficiency — coeff 28.7
+        state.setCurrentTemperature(state.getTemperatureBaseline() + (cycles * 0.15) + noise * 5);
         // Torque becomes erratic
-        state.setCurrentTorque(state.getTorqueBaseline() + (cycles * 0.04) + noise * 8 * erraticFactor);
-        // Pressure slight drop
-        state.setCurrentPressure(state.getPressureBaseline() - (cycles * 0.008) + noise * 1.0);
+        state.setCurrentTorque(state.getTorqueBaseline() + (cycles * 0.06) + noise * 8 * erraticFactor);
+        // Pressure drops from system instability — coeff -54.6
+        state.setCurrentPressure(Math.max(2.0, state.getPressureBaseline() - (cycles * 0.02) + noise * 1.0));
     }
 
     private String determineQualityFlag(String sensorType, double value) {

@@ -6,6 +6,7 @@ export { Layout } from './Layout';
 export { GlobalOverview } from './GlobalOverview';
 export { SensorMonitor } from './SensorMonitor';
 export { EquipmentHealth } from './EquipmentHealth';
+export { Recommendations } from './Recommendations';
 export { OrderTracker } from './OrderTracker';
 export { ChatInterface } from './ChatInterface';
 export { DemoScenarios } from './DemoScenarios';

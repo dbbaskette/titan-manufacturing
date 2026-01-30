@@ -21,11 +21,11 @@ public class ModelExportService {
     private static final Logger log = LoggerFactory.getLogger(ModelExportService.class);
 
     private final JdbcTemplate jdbcTemplate;
-    private final GemFireScoringService gemFireScoringService;
+    private final GemFireService gemFireService;
 
-    public ModelExportService(JdbcTemplate jdbcTemplate, @org.springframework.context.annotation.Lazy GemFireScoringService gemFireScoringService) {
+    public ModelExportService(JdbcTemplate jdbcTemplate, @org.springframework.context.annotation.Lazy GemFireService gemFireService) {
         this.jdbcTemplate = jdbcTemplate;
-        this.gemFireScoringService = gemFireScoringService;
+        this.gemFireService = gemFireService;
     }
 
     /**
@@ -170,8 +170,15 @@ public class ModelExportService {
             result.put("message", "Model retrained. Use deployModelToGemFire to push updated PMML to GemFire.");
             result.put("steps", steps);
 
-            // Reload coefficients into GemFire scoring service
-            gemFireScoringService.loadCoefficients();
+            // Auto-redeploy PMML to GemFire so the server-side scoring function picks up new model
+            try {
+                log.info("Auto-deploying retrained model to GemFire...");
+                gemFireService.deployModelToGemFire("failure_predictor_v1");
+                steps.add(step("result", "PMML model auto-deployed to GemFire PmmlModels region"));
+            } catch (Exception deployEx) {
+                log.warn("Auto-deploy to GemFire failed: {}. Use deployModelToGemFire manually.", deployEx.getMessage());
+                steps.add(step("warn", "Auto-deploy failed: " + deployEx.getMessage() + ". Deploy manually."));
+            }
 
             return result;
 
@@ -226,7 +233,7 @@ public class ModelExportService {
         xml.append("  <Header>\n");
         xml.append("    <Application name=\"Titan Manufacturing ML\" version=\"5.0\"/>\n");
         xml.append("    <Timestamp>").append(timestamp).append("</Timestamp>\n");
-        xml.append("    <Description>Equipment failure prediction model for Titan Manufacturing</Description>\n");
+        xml.append("    <Annotation>Equipment failure prediction model for Titan Manufacturing</Annotation>\n");
         xml.append("  </Header>\n\n");
 
         // Data Dictionary
