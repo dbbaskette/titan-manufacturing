@@ -134,7 +134,7 @@ flowchart TB
 |-------|------|------|-----------|
 | **Sensor** | 8081 | IoT data from 600+ CNC machines | `list_equipment`, `get_sensor_readings`, `get_facility_status`, `detect_anomaly` |
 | **Maintenance** | 8082 | Predictive maintenance & RUL via GemFire PMML | `predict_failure`, `estimate_rul`, `schedule_maintenance`, `get_maintenance_history` |
-| **Inventory** | 8083 | 50K+ SKU management with pgvector | `check_stock`, `search_products`, `find_alternatives`, `calculate_reorder` |
+| **Inventory** | 8083 | 50K+ SKU management with pgvector | `check_stock`, `search_products`, `find_alternatives`, `calculate_reorder`, `get_compatible_parts` |
 | **Logistics** | 8084 | Global shipping optimization | `get_carriers`, `create_shipment`, `track_shipment`, `estimate_shipping` |
 | **Order** | 8085 | B2B order fulfillment | `validate_order`, `check_contract_terms`, `initiate_fulfillment`, `get_order_status` |
 | **Communications** | 8086 | Customer notifications | `send_notification`, `handle_inquiry`, `draft_customer_update` |
@@ -443,6 +443,40 @@ curl -X POST http://localhost:8090/api/generator/reset-all
 
 ---
 
+## Autonomous Anomaly Response
+
+When equipment risk scores cross thresholds, the platform triggers autonomous responses via RabbitMQ events and the Embabel GOAP planner — no human intervention needed for critical failures.
+
+### How It Works
+
+```mermaid
+flowchart LR
+    GF[GemFire<br/>PMML Scoring] -->|≥70%| RMQ_C[RabbitMQ<br/>CRITICAL queue]
+    GF -->|≥50%| RMQ_H[RabbitMQ<br/>HIGH queue]
+    RMQ_C --> LISTENER[AnomalyEvent<br/>Listener]
+    RMQ_H --> LISTENER
+    LISTENER -->|CRITICAL| GOAP[Embabel GOAP<br/>Multi-Step Chain]
+    LISTENER -->|HIGH| GOAP
+    GOAP -->|CRITICAL| AUTO[Auto-Schedule<br/>Maintenance + Notify]
+    GOAP -->|HIGH| REC[Create<br/>Recommendation]
+    REC --> DASH[Dashboard<br/>Approve / Dismiss]
+    DASH -->|Approve| GOAP
+```
+
+- **CRITICAL (≥70%)**: Full automated response — diagnose fault, find compatible parts, schedule emergency maintenance, notify personnel
+- **HIGH (≥50%)**: Creates a recommendation with reserved parts, awaiting human approval via the dashboard
+- **Approval**: When a human approves a HIGH recommendation, it triggers the same CRITICAL chain
+
+### Equipment Parts Compatibility
+
+The `equipment_parts_compatibility` table (102 rows) links 7 equipment models to specific replacement parts by fault type. The `get_compatible_parts` MCP tool uses this matrix so the agent finds model-specific parts rather than guessing from a diagnosis string.
+
+For example, a bearing fault on a **DMG MORI DMU 50** returns `INDL-BRG-7420` (angular contact bearing), while the same fault on a **Mazak VTC-800** returns `INDL-BRG-7421` (cylindrical bearing) — different machines need different parts.
+
+See [docs/embabel-architecture.md](docs/embabel-architecture.md) for the full GOAP chain design with 3 branch points (urgency, parts availability, regulatory compliance).
+
+---
+
 ## Project Structure
 
 ```
@@ -453,9 +487,12 @@ titan-manufacturing/
 │
 ├── titan-orchestrator/          # Embabel-based agent coordinator
 │   └── src/main/java/com/titan/orchestrator/
-│       ├── agent/               # All 7 TitanAgent implementations
-│       ├── config/              # McpToolGroupsConfiguration
-│       └── controller/          # REST API endpoints
+│       ├── agent/               # TitanAnomalyAgent (GOAP multi-step chain)
+│       ├── config/              # McpToolGroupsConfiguration, RabbitConfig
+│       ├── controller/          # REST API + RecommendationController
+│       ├── listener/            # AnomalyEventListener (RabbitMQ)
+│       ├── model/               # AnomalyEvent, AnomalyResponse records
+│       └── service/             # RecommendationService, AutomatedActionService, NotificationService
 │
 ├── sensor-mcp-server/           # IoT sensor data (Port 8081)
 ├── maintenance-mcp-server/      # Predictive maintenance (Port 8082)
