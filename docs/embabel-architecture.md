@@ -11,34 +11,44 @@ Key differentiator: unlike workflow frameworks where the developer codes each st
 ## Architecture Overview
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                        Titan Orchestrator                        │
-│                                                                  │
-│  ┌─────────────────┐    ┌──────────────┐    ┌────────────────┐  │
-│  │ RabbitMQ Listener│───▶│ AgentPlatform│───▶│ GOAP Planner   │  │
-│  │ (event trigger)  │    │ (registry)   │    │ (A* search)    │  │
-│  └─────────────────┘    └──────────────┘    └───────┬────────┘  │
-│                                                      │           │
-│  ┌──────────────────────────────────────────────────▼────────┐  │
-│  │                    TitanAnomalyAgent                       │  │
-│  │                                                            │  │
-│  │  @Action(toolGroups={"maintenance","inventory","comms"})   │  │
-│  │  handleCriticalAnomaly(CriticalAnomalyInput) → Response    │  │
-│  │                                                            │  │
-│  │  @Action(toolGroups={"maintenance","inventory"})           │  │
-│  │  handleHighAnomaly(HighAnomalyInput) → Response            │  │
-│  └────────────────────────┬───────────────────────────────────┘  │
-│                           │ LLM calls tools via MCP              │
-│  ┌────────────────────────▼───────────────────────────────────┐  │
-│  │              Tool Groups (McpToolGroup beans)               │  │
-│  │  sensor-tools │ maintenance-tools │ inventory-tools │ ...   │  │
-│  └───────┬──────────────┬─────────────────┬───────────────────┘  │
-└──────────┼──────────────┼─────────────────┼──────────────────────┘
-           │              │                 │
-     ┌─────▼─────┐ ┌─────▼──────┐  ┌──────▼───────┐
-     │ Sensor MCP│ │Maintenance │  │ Inventory MCP│  ... 4 more
-     │  :8081    │ │ MCP :8082  │  │    :8083     │
-     └───────────┘ └────────────┘  └──────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                          Titan Orchestrator                           │
+│                                                                      │
+│  ┌─────────────────┐    ┌──────────────┐    ┌────────────────┐       │
+│  │ RabbitMQ Listener│───▶│ AgentPlatform│───▶│ GOAP Planner   │       │
+│  │ (event trigger)  │    │ (registry)   │    │ (A* search)    │       │
+│  └─────────────────┘    └──────────────┘    └───────┬────────┘       │
+│                                                      │                │
+│  ┌──────────────────────────────────────────────────▼──────────────┐ │
+│  │                    TitanAnomalyAgent (Multi-Step GOAP Chain)     │ │
+│  │                                                                  │ │
+│  │  CriticalAnomalyInput                                           │ │
+│  │    → diagnoseAnomaly [maintenance-tools]     → FaultDiagnosis   │ │
+│  │    → assessUrgency [pure logic]              → BRANCH 1         │ │
+│  │      ├─ IMMEDIATE → emergencyShutdown [sensor-tools]            │ │
+│  │      └─ DEFERRABLE → (skip)                                     │ │
+│  │    → assessParts [inventory-tools]           → BRANCH 2         │ │
+│  │      ├─ PartsAvailable → scheduleWithLocalParts                 │ │
+│  │      └─ PartsUnavailable → procureCrossFacility [logistics]     │ │
+│  │           → scheduleWithProcuredParts [maintenance-tools]        │ │
+│  │    → checkComplianceRequired [pure logic]    → BRANCH 3         │ │
+│  │      ├─ Regulated → verifyCompliance [governance-tools]         │ │
+│  │      └─ Unregulated → (skip)                                    │ │
+│  │    → finalizeResponse                        → Response         │ │
+│  │                                                                  │ │
+│  │  HighAnomalyInput → (reuses diagnosis + parts) → Recommendation │ │
+│  └────────────────────────┬─────────────────────────────────────────┘ │
+│                           │ LLM calls tools via MCP                   │
+│  ┌────────────────────────▼───────────────────────────────────────┐   │
+│  │              Tool Groups (McpToolGroup beans)                   │   │
+│  │  sensor │ maintenance │ inventory │ logistics │ governance │ …  │   │
+│  └───┬─────────┬──────────────┬──────────┬──────────┬─────────────┘   │
+└──────┼─────────┼──────────────┼──────────┼──────────┼─────────────────┘
+       │         │              │          │          │
+  ┌────▼───┐ ┌──▼────────┐ ┌──▼───────┐ ┌▼────────┐ ┌▼──────────┐
+  │Sensor  │ │Maintenance│ │Inventory │ │Logistics│ │Governance │ +comms
+  │ :8081  │ │  :8082    │ │  :8083   │ │ :8084   │ │  :8087    │
+  └────────┘ └───────────┘ └──────────┘ └─────────┘ └───────────┘
 ```
 
 ---
@@ -50,13 +60,13 @@ Key differentiator: unlike workflow frameworks where the developer codes each st
 GOAP works backward from a **goal** (desired output type) to find a sequence of **actions** that can produce it. The algorithm:
 
 1. You invoke `AgentInvocation.create(agentPlatform, CriticalAnomalyResponse.class)`
-2. The planner asks: "Which `@AchievesGoal` action returns `CriticalAnomalyResponse`?"
-3. It finds `handleCriticalAnomaly(CriticalAnomalyInput, Ai)` → match
-4. It checks: "Is `CriticalAnomalyInput` available on the blackboard?"
-5. You call `invocation.invoke(new CriticalAnomalyInput(event))` — placing it on the blackboard
-6. Preconditions met → action executes
+2. The planner asks: "Which actions can ultimately produce `CriticalAnomalyResponse`?"
+3. A* search discovers the chain: `diagnoseAnomaly` → `assessUrgency` → (branch) → `assessParts` → (branch) → `scheduleMaintenance` → (branch) → `finalizeResponse`
+4. You call `invocation.invoke(new CriticalAnomalyInput(event))` — placing it on the blackboard
+5. Each action executes in sequence; its output is placed on the blackboard, enabling the next action
+6. At runtime, branch points produce different types (e.g., `ImmediateUrgency` vs `DeferrableUrgency`), and the planner re-evaluates which downstream actions to run
 
-For multi-step goals, the planner chains actions: if action B needs type X, and action A produces type X, the planner runs A then B. This is the A* search over the type graph.
+The planner chains actions via the **type graph**: action B needs type X as input, action A produces type X as output, so A runs before B. Branching happens when an action returns a sealed interface — the concrete subtype determines which downstream actions have their preconditions met.
 
 ### 2. The Blackboard
 
@@ -154,28 +164,65 @@ Sensor Generator (MQTT) → Sensor MCP (8081) → GemFire scoring
 
 1. **Trigger**: `AnomalyEventListener.handleCritical()` receives event from RabbitMQ
 2. **Invocation**: `AgentInvocation.create(agentPlatform, CriticalAnomalyResponse.class)`
-3. **Planning**: GOAP finds `handleCriticalAnomaly` (matches input type + goal type)
-4. **Execution**: Action runs, giving the LLM access to maintenance, inventory, and communications tools
-5. **LLM Tool Calls**: The LLM reads the prompt and decides to call:
-   - `checkStock` / `findAlternatives` (inventory-tools)
-   - `scheduleMaintenance` (maintenance-tools)
-   - `sendNotification` (communications-tools)
-6. **Response**: LLM output is parsed into `CriticalAnomalyResponse` record
-7. **Audit**: `automatedActionService.record()` saves to Greenplum
+3. **Planning**: GOAP discovers the multi-step chain via A* over the type graph
+4. **Execution**: The chain runs through up to 8 actions with 3 branch points:
+
+```
+Step 1: diagnoseAnomaly [maintenance-tools]
+        → FaultDiagnosis (fault type, RUL, urgency, regulated flag)
+
+Step 2: assessUrgency [pure logic]
+        → BRANCH 1: ImmediateUrgency or DeferrableUrgency
+
+Step 3: (IMMEDIATE only) emergencyShutdown [sensor-tools]
+        → ShutdownConfirmation
+
+Step 4: assessParts [inventory-tools]
+        → BRANCH 2: PartsAvailable or PartsUnavailable
+
+Step 5: (UNAVAILABLE only) procureCrossFacility [logistics + inventory-tools]
+        → CrossFacilityResult
+
+Step 6: scheduleMaintenance [maintenance-tools]
+        → MaintenanceOrder
+
+Step 7: checkComplianceRequired [pure logic]
+        → BRANCH 3: RegulatedMaintenanceOrder or UnregulatedMaintenanceOrder
+
+Step 8: (REGULATED only) verifyCompliance [governance-tools]
+        → ComplianceVerification
+
+Step 9: finalizeResponse [pure logic]
+        → CriticalAnomalyResponse
+```
+
+5. **Post-agent**: `NotificationService.sendMaintenanceAlert()` fires deterministically
+6. **Audit**: `automatedActionService.record()` saves to Greenplum
+
+**Branch paths and tool coverage:**
+
+| Path | Branch Decisions | Tool Groups Used | LLM Calls |
+|------|-----------------|------------------|-----------|
+| Shortest | DEFERRABLE → LOCAL_PARTS → UNREGULATED | maintenance, inventory | 3 |
+| Emergency | IMMEDIATE → LOCAL_PARTS → UNREGULATED | maintenance, sensor, inventory | 4 |
+| Cross-facility | DEFERRABLE → CROSS_FACILITY → UNREGULATED | maintenance, inventory, logistics | 4 |
+| Regulated | IMMEDIATE → LOCAL_PARTS → REGULATED | maintenance, sensor, inventory, governance | 5 |
+| Longest | IMMEDIATE → CROSS_FACILITY → REGULATED | maintenance, sensor, inventory, logistics, governance | 6 |
 
 ### HIGH Anomaly (≥50% failure probability)
 
 1. Same trigger/invocation/planning pattern but targets `HighAnomalyResponse`
-2. Action only has `maintenance-tools` and `inventory-tools` (no communications)
-3. Does NOT schedule maintenance — creates a recommendation for human approval
-4. Dashboard shows recommendation; human clicks "Approve" or "Dismiss"
+2. Reuses `diagnoseAnomaly`, `assessUrgency`, `emergencyShutdown`, and `assessParts` from the CRITICAL chain
+3. Diverges at the end: `finalizeHighResponse` builds a recommendation (no scheduling, no compliance)
+4. Does NOT schedule maintenance — creates a recommendation for human approval
+5. Dashboard shows recommendation; human clicks "Approve" or "Dismiss"
 
 ### Approval Flow
 
 1. `RecommendationController.approveRecommendation()` receives HTTP POST
 2. Reconstructs an `AnomalyEvent` from the stored recommendation
 3. Invokes `AgentInvocation.create(agentPlatform, CriticalAnomalyResponse.class)` — same goal as CRITICAL
-4. GOAP routes to `handleCriticalAnomaly` which now schedules maintenance + notifies
+4. GOAP discovers and runs the full multi-step chain (diagnosis → urgency → parts → scheduling → compliance → finalize)
 
 ---
 
@@ -198,22 +245,32 @@ public void handleAnomaly(AnomalyEvent event) {
 
 Problems: rigid workflow, no adaptability, every branch hand-coded, no intelligence in decision-making.
 
-### With Embabel (goal-driven)
+### With Embabel (goal-driven, multi-step GOAP)
 
 ```java
-@AchievesGoal(description = "Prevent equipment failure by reserving parts, " +
-                            "scheduling maintenance, and notifying personnel")
-@Action(toolGroups = {"maintenance-tools", "inventory-tools", "communications-tools"})
-public CriticalAnomalyResponse handleCriticalAnomaly(CriticalAnomalyInput input, Ai ai) {
-    return ai.withAutoLlm().createObject(prompt, CriticalAnomalyResponse.class);
-}
+// Each action is a discrete step with scoped tools and typed I/O.
+// GOAP chains them automatically via A* over the type graph.
+
+@Action(toolGroups = {"maintenance-tools"})
+public FaultDiagnosis diagnoseAnomaly(CriticalAnomalyInput input, Ai ai) { ... }
+
+@Action  // pure logic — no LLM
+public UrgencyAssessment assessUrgency(FaultDiagnosis diagnosis) { ... }
+
+@Action(toolGroups = {"sensor-tools"})
+public ShutdownConfirmation emergencyShutdown(ImmediateUrgency urgency, Ai ai) { ... }
+
+@Action(toolGroups = {"inventory-tools"})
+public PartsAssessment assessParts(ShutdownConfirmation | DeferrableUrgency, Ai ai) { ... }
+
+// ...more actions for procurement, scheduling, compliance, finalization
 ```
 
-The LLM decides:
-- **Which** parts to reserve based on the probable cause (bearing → SKU X, motor → SKU Y)
-- **Whether** alternatives are needed if primary parts are out of stock
-- **What** maintenance notes to include
-- **How** to compose the notification
+The GOAP planner decides:
+- **Which actions** to run based on the type graph (A* search from input to goal)
+- **Which branch** to take based on runtime data (urgency, stock, regulation)
+- **Which tools** each action can access (scoped via `toolGroups`)
+- Within each action, the LLM decides which specific tools to call
 
 ### Value Proposition
 
@@ -247,12 +304,24 @@ Embabel shines when:
 
 ### TitanAnomalyAgent
 
-**Purpose**: Respond to ML-detected equipment anomalies.
+**Purpose**: Respond to ML-detected equipment anomalies via a multi-step GOAP chain with 3 branch points.
 
-| Action | Goal | Tool Groups | Trigger |
-|--------|------|-------------|---------|
-| `handleCriticalAnomaly` | Prevent failure: reserve parts, schedule maintenance, notify | maintenance, inventory, communications | RabbitMQ CRITICAL event or approval |
-| `handleHighAnomaly` | Prepare for failure: reserve parts, create recommendation | maintenance, inventory | RabbitMQ HIGH event |
+| Action | Input Type | Output Type | Tool Groups | LLM? |
+|--------|-----------|-------------|-------------|------|
+| `diagnoseAnomaly` | `CriticalAnomalyInput` | `FaultDiagnosis` | maintenance-tools | Yes |
+| `diagnoseHighAnomaly` | `HighAnomalyInput` | `FaultDiagnosis` | maintenance-tools | Yes |
+| `assessUrgency` | `FaultDiagnosis` | `ImmediateUrgency` / `DeferrableUrgency` | — | No |
+| `emergencyShutdown` | `ImmediateUrgency` | `ShutdownConfirmation` | sensor-tools | Yes |
+| `assessPartsAfterShutdown` | `ShutdownConfirmation` | `PartsAvailable` / `PartsUnavailable` | inventory-tools | Yes |
+| `assessPartsDirect` | `DeferrableUrgency` | `PartsAvailable` / `PartsUnavailable` | inventory-tools | Yes |
+| `procureCrossFacility` | `FaultDiagnosis` + `PartsUnavailable` | `CrossFacilityResult` | logistics, inventory | Yes |
+| `scheduleWithLocalParts` | `FaultDiagnosis` + `PartsAvailable` | `MaintenanceOrder` | maintenance-tools | Yes |
+| `scheduleWithProcuredParts` | `FaultDiagnosis` + `CrossFacilityResult` | `MaintenanceOrder` | maintenance-tools | Yes |
+| `checkComplianceRequired` | `MaintenanceOrder` + `FaultDiagnosis` | `Regulated/UnregulatedMaintenanceOrder` | — | No |
+| `verifyCompliance` | `RegulatedMaintenanceOrder` + `FaultDiagnosis` | `ComplianceVerification` | governance-tools | Yes |
+| `finalizeWithCompliance` | `ComplianceVerification` | `CriticalAnomalyResponse` | — | No |
+| `finalizeStandard` | `UnregulatedMaintenanceOrder` | `CriticalAnomalyResponse` | — | No |
+| `finalizeHighResponse` | `FaultDiagnosis` + `PartsAssessment` | `HighAnomalyResponse` | — | No |
 
 ### TitanSensorAgent
 
