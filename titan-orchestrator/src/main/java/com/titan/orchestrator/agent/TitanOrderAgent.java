@@ -21,7 +21,7 @@ import org.springframework.stereotype.Component;
  * - Fulfillment workflow initiation (inventory allocation, shipment planning)
  * - Order status tracking with event timeline
  */
-@Agent(description = "Titan Order Agent - Validates and processes customer orders for strategic accounts like Boeing and Airbus. " +
+@Agent(description = "Titan Order Agent - Validates and processes customer orders for strategic accounts like Apex Aerospace and Horizon Aircraft. " +
        "Provides order validation, contract terms lookup, fulfillment orchestration, and status tracking.")
 @Component
 public class TitanOrderAgent {

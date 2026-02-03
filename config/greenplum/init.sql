@@ -18,7 +18,7 @@ CREATE TABLE titan_divisions (
 );
 
 INSERT INTO titan_divisions VALUES
-('AERO', 'Titan Aerospace', 'Turbine blades, engine housings, landing gear for Boeing, Airbus, SpaceX'),
+('AERO', 'Titan Aerospace', 'Turbine blades, engine housings, landing gear for Apex Aerospace, Horizon Aircraft, SpaceX'),
 ('ENERGY', 'Titan Energy', 'Wind turbine gearboxes, solar frames, pipeline valves for GE, Siemens'),
 ('MOBILITY', 'Titan Mobility', 'EV motor housings, battery enclosures for Tesla, Ford, Rivian'),
 ('INDUSTRIAL', 'Titan Industrial', 'CNC parts, hydraulic pumps, bearings for Caterpillar, John Deere');
@@ -718,8 +718,8 @@ CREATE TABLE customers (
 );
 
 INSERT INTO customers VALUES
-('CUST-BOEING', 'Boeing Commercial Airplanes', 'STRATEGIC', 'Aerospace', 'USA', 50000000.00, 45),
-('CUST-AIRBUS', 'Airbus SE', 'STRATEGIC', 'Aerospace', 'France', 45000000.00, 45),
+('CUST-APEX', 'Apex Aerospace Inc.', 'STRATEGIC', 'Aerospace', 'USA', 50000000.00, 45),
+('CUST-HORIZON', 'Horizon Aircraft Corp', 'STRATEGIC', 'Aerospace', 'France', 45000000.00, 45),
 ('CUST-SPACEX', 'SpaceX', 'STRATEGIC', 'Aerospace', 'USA', 25000000.00, 30),
 ('CUST-TESLA', 'Tesla Inc.', 'STRATEGIC', 'Automotive', 'USA', 35000000.00, 30),
 ('CUST-FORD', 'Ford Motor Company', 'MAJOR', 'Automotive', 'USA', 20000000.00, 30),
@@ -756,10 +756,10 @@ CREATE TABLE order_lines (
     line_total DECIMAL(12,2)
 );
 
--- Boeing expedite order (key demo scenario)
+-- Apex expedite order (key demo scenario)
 INSERT INTO orders VALUES
-('TM-2024-45892', 'CUST-BOEING', NOW(), NOW() + INTERVAL '5 days', 'EXPEDITE', 'EXPEDITE', 1225000.00,
- 'Boeing Everett Factory, 3003 W Casino Rd, Everett, WA 98204', 'URGENT: 787 production line - split shipment authorized');
+('TM-2024-45892', 'CUST-APEX', NOW(), NOW() + INTERVAL '5 days', 'EXPEDITE', 'EXPEDITE', 1225000.00,
+ 'Apex Aerospace Facility, 500 Innovation Way, Seattle, WA 98101', 'URGENT: widebody production line - split shipment authorized');
 
 INSERT INTO order_lines (order_id, sku, quantity, unit_price, line_total) VALUES
 ('TM-2024-45892', 'AERO-TB-001', 500, 2450.00, 1225000.00);
@@ -907,7 +907,7 @@ INSERT INTO shipping_rates (carrier_id, origin_region, dest_region, weight_min_k
 
 -- Sample shipments for existing orders
 INSERT INTO shipments (shipment_id, order_id, carrier_id, tracking_number, status, origin_facility, destination_address, destination_city, destination_country, ship_date, estimated_delivery, weight_kg, shipping_cost) VALUES
-('SHIP-2024-001', 'TM-2024-45892', 'FEDEX-EXPRESS', 'FX789456123US', 'IN_TRANSIT', 'PHX', 'Boeing Everett Factory, 3003 W Casino Rd', 'Everett, WA', 'USA', NOW() - INTERVAL '1 day', NOW() + INTERVAL '1 day', 600.0, 4250.00),
+('SHIP-2024-001', 'TM-2024-45892', 'FEDEX-EXPRESS', 'FX789456123US', 'IN_TRANSIT', 'PHX', 'Apex Aerospace Facility, 500 Innovation Way', 'Everett, WA', 'USA', NOW() - INTERVAL '1 day', NOW() + INTERVAL '1 day', 600.0, 4250.00),
 ('SHIP-2024-002', 'TM-2024-45893', 'UPS-GROUND', 'UPS1Z999AA10123456784', 'PENDING', 'DET', 'Tesla Fremont Factory, 45500 Fremont Blvd', 'Fremont, CA', 'USA', NULL, NOW() + INTERVAL '7 days', 9000.0, 450.00);
 
 -- =============================================================================
@@ -2479,7 +2479,7 @@ INSERT INTO communication_templates (template_id, template_type, subject_templat
  E'Dear {{customer_name}},\n\nYour order {{order_id}} has been delivered on {{delivery_date}}.\n\nWe hope everything meets your expectations. If you have any questions or concerns about your order, please contact us within 30 days.\n\nThank you for your business!\n\nBest regards,\nTitan Manufacturing',
  '["order_id", "customer_name", "delivery_date"]');
 
--- Material batches for traceability demo (Boeing order)
+-- Material batches for traceability demo (Apex order)
 INSERT INTO material_batches (batch_id, material_sku, supplier_id, received_date, quantity, unit_of_measure, storage_location, production_date, lot_number, status) VALUES
 ('TI-2024-0892', 'AERO-TB-001', 'SUP-TIMET', '2024-06-15', 2000.00, 'KG', 'PHX-WH-A1-RACK-12', '2024-06-10', 'TIMET-2024-5621', 'AVAILABLE'),
 ('TI-2024-0893', 'AERO-TB-001', 'SUP-TIMET', '2024-07-01', 1500.00, 'KG', 'MUC-WH-B2-RACK-05', '2024-06-25', 'TIMET-2024-5734', 'AVAILABLE'),
@@ -2497,7 +2497,7 @@ INSERT INTO batch_certifications (batch_id, cert_type, cert_number, issued_date,
 ('AL-2024-1205', 'MILL_CERT', 'MC-ALCOA-2024-8842', '2024-06-19', '2025-06-19', '/docs/certs/MC-ALCOA-2024-8842.pdf', 'Alcoa Corporation', 'QA-CHEN', '2024-06-20 08:00:00'),
 ('AL-2024-1205', 'ISO_CERT', 'ISO-9001-ALCOA-2024', '2024-01-01', '2025-01-01', '/docs/certs/ISO-9001-ALCOA-2024.pdf', 'ISO Certification Body', 'QA-CHEN', '2024-06-20 08:15:00');
 
--- Order events for Boeing order TM-2024-45892
+-- Order events for Apex order TM-2024-45892
 INSERT INTO order_events (order_id, event_type, event_timestamp, event_data, created_by, notes) VALUES
 ('TM-2024-45892', 'CREATED', '2024-07-20 09:00:00', '{"source": "EDI", "po_number": "BOEING-PO-98765"}', 'EDI-SYSTEM', 'Order received via EDI'),
 ('TM-2024-45892', 'VALIDATED', '2024-07-20 09:15:00', '{"inventory_check": "PASSED", "credit_check": "PASSED"}', 'ORDER-SYSTEM', 'Automatic validation passed'),

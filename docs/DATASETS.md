@@ -41,7 +41,7 @@ Datasets for implementing the Titan 5.0 AI platform demo.
 - **URL**: https://www.kaggle.com/datasets/shashwatwork/dataco-smart-supply-chain-for-big-data-analysis
 - **Size**: 180,000+ records
 - **Features**: Orders, products, shipping, customers
-- **Titan mapping**: Map to Boeing, Tesla, GE customers
+- **Titan mapping**: Map to Apex Aerospace, Tesla, GE customers
 
 ---
 

@@ -47,8 +47,8 @@ const SCENARIOS: Scenario[] = [
     prompt: 'Check the health status of PHX-CNC-007 and recommend maintenance actions',
   },
   {
-    id: 'boeing-expedite',
-    name: 'Boeing Expedite',
+    id: 'apex-expedite',
+    name: 'Apex Expedite',
     description:
       'Rush order for 500 turbine blade blanks with contract validation and split shipment across facilities. Demonstrates multi-agent order fulfillment.',
     icon: Plane,
@@ -56,19 +56,19 @@ const SCENARIOS: Scenario[] = [
     category: 'Order Fulfillment',
     agents: ['Order Agent', 'Inventory Agent', 'Logistics Agent', 'Communications Agent'],
     steps: [
-      'Order Agent validates Boeing contract terms',
+      'Order Agent validates Apex Aerospace contract terms',
       'Order Agent checks aerospace compliance requirements',
       'Inventory Agent finds stock: Phoenix 320 + Munich 400',
       'Logistics Agent plans split air freight shipment',
-      'Communications Agent confirms ETA to Boeing',
+      'Communications Agent confirms ETA to Apex Aerospace',
     ],
-    prompt: 'Boeing needs 500 turbine blade blanks ASAP - order TM-2024-45892. Validate and fulfill.',
+    prompt: 'Apex Aerospace needs 500 turbine blade blanks ASAP - order TM-2024-45892. Validate and fulfill.',
   },
   {
     id: 'faa-audit',
     name: 'FAA Audit',
     description:
-      'Trace titanium batch TI-2024-0892 for Boeing 787 landing gear regulatory compliance. Demonstrates data lineage and governance capabilities.',
+      'Trace titanium batch TI-2024-0892 for Apex widebody landing gear regulatory compliance. Demonstrates data lineage and governance capabilities.',
     icon: Shield,
     color: 'healthy',
     category: 'Data Governance',
@@ -80,7 +80,7 @@ const SCENARIOS: Scenario[] = [
       'Validates FAA-8110-3 Form availability',
       'Generates comprehensive compliance report',
     ],
-    prompt: 'Trace titanium batch TI-2024-0892 used in Boeing 787 landing gear for FAA audit',
+    prompt: 'Trace titanium batch TI-2024-0892 used in Apex widebody landing gear for FAA audit',
   },
   {
     id: 'supply-crisis',
