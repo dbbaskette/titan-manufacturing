@@ -469,11 +469,11 @@ export const DEMO_SCENARIOS = [
     category: 'maintenance' as const,
   },
   {
-    id: 'boeing-expedite',
-    name: 'Boeing Expedite',
+    id: 'apex-expedite',
+    name: 'Apex Expedite',
     description: 'Rush order for 500 turbine blade blanks with split shipment',
     icon: 'Plane',
-    prompt: 'Boeing needs 500 turbine blade blanks ASAP - order TM-2024-45892. Validate and fulfill.',
+    prompt: 'Apex Aerospace needs 500 turbine blade blanks ASAP - order TM-2024-45892. Validate and fulfill.',
     category: 'fulfillment' as const,
   },
   {
@@ -481,7 +481,7 @@ export const DEMO_SCENARIOS = [
     name: 'FAA Audit',
     description: 'Trace titanium batch TI-2024-0892 for 787 landing gear compliance',
     icon: 'Shield',
-    prompt: 'Trace titanium batch TI-2024-0892 used in Boeing 787 landing gear for FAA audit',
+    prompt: 'Trace titanium batch TI-2024-0892 used in Apex widebody landing gear for FAA audit',
     category: 'compliance' as const,
   },
   {

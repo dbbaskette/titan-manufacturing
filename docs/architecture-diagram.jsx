@@ -42,7 +42,7 @@ const agents = {
   },
   order: {
     title: "Order Agent",
-    role: "Handles B2B order fulfillment for Boeing, Tesla, GE and other enterprise customers",
+    role: "Handles B2B order fulfillment for Apex Aerospace, Tesla, GE and other enterprise customers",
     tools: ["validate_order", "check_contract_terms", "initiate_fulfillment", "get_order_status"],
     tanzu: "RabbitMQ + PostgreSQL",
     mcp: "order-mcp-server:8085",
@@ -74,10 +74,10 @@ const scenarios = [
     description: "Governance validates access → Sensor confirms anomaly → Maintenance predicts 73% failure, 48hr RUL → Inventory checks bearings → Maintenance schedules replacement"
   },
   {
-    name: "✈️ Boeing Expedite",
+    name: "✈️ Apex Expedite",
     trigger: "Order #TM-2024-45892 for 500 turbine blade blanks — ASAP",
     flow: ["governance", "order", "inventory", "logistics", "comms"],
-    description: "Governance checks aerospace compliance → Order validates contract → Inventory: Phoenix (320) + Munich (400) → Logistics plans split air freight → Comms confirms to Boeing"
+    description: "Governance checks aerospace compliance → Order validates contract → Inventory: Phoenix (320) + Munich (400) → Logistics plans split air freight → Comms confirms to Apex Aerospace"
   },
   {
     name: "📋 FAA Audit",

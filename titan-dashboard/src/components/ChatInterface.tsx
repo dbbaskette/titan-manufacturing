@@ -111,7 +111,7 @@ Phoenix Plant (Receiving)
 Production Line (CNC-007, CNC-012)
     ↓ Work Orders: WO-2024-1847, WO-2024-1848
     ↓ 320 units produced
-Boeing 787 Landing Gear (End Use)
+Apex Widebody Landing Gear (End Use)
     ↓ FAA-8110-3 Form attached
     ↓ Certificate of Conformance issued
 \`\`\`

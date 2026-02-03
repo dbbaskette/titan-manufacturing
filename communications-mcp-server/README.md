@@ -3,7 +3,7 @@
 Customer notification and inquiry handling agent.
 
 ## Role at Titan
-- Sends order confirmations to Boeing, Tesla procurement teams
+- Sends order confirmations to Apex Aerospace, Tesla procurement teams
 - Handles customer inquiries via RAG pipeline
 - Drafts supply chain disruption notifications
 

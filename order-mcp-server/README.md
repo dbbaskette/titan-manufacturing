@@ -3,9 +3,9 @@
 B2B order fulfillment agent for Titan's enterprise customers.
 
 ## Role at Titan
-- Processes orders from Boeing, Tesla, GE, and other strategic accounts
+- Processes orders from Apex Aerospace, Tesla, GE, and other strategic accounts
 - Validates against contract terms and credit limits
-- Handles expedite requests (like Boeing order TM-2024-45892)
+- Handles expedite requests (like Apex order TM-2024-45892)
 
 ## Tools
 | Tool | Description |
@@ -18,7 +18,7 @@ B2B order fulfillment agent for Titan's enterprise customers.
 | `cancel_order` | Cancel pending order |
 
 ## Customer Tiers
-- **STRATEGIC**: Boeing, Airbus, Tesla — $25M+ credit, 45-day terms
+- **STRATEGIC**: Apex Aerospace, Horizon Aircraft, Tesla — $25M+ credit, 45-day terms
 - **MAJOR**: GE, Ford, Caterpillar — $10M+ credit, 30-day terms
 - **STANDARD**: Smaller accounts
 

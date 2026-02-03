@@ -5,7 +5,7 @@ Global shipping optimization agent for Titan Manufacturing.
 ## Role at Titan
 - Optimizes shipping from 12 facilities to global B2B customers
 - Selects carriers for aerospace (expedite) vs standard shipments
-- Handles split shipments (e.g., Boeing order from Phoenix + Munich)
+- Handles split shipments (e.g., Apex order from Phoenix + Munich)
 
 ## Tools
 | Tool | Description |
@@ -19,7 +19,7 @@ Global shipping optimization agent for Titan Manufacturing.
 | `plan_split_shipment` | Multi-facility fulfillment |
 
 ## Carriers
-- FedEx Express (Air) — Boeing expedites
+- FedEx Express (Air) — Aerospace expedites
 - DHL Global (International)
 - Maersk (Ocean Freight)
 

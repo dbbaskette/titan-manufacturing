@@ -40,7 +40,7 @@ A **multi-agent AI platform** for manufacturing operations, demonstrating enterp
 
 | Division | Products | Key Customers |
 |----------|----------|---------------|
-| **Titan Aerospace** | Turbine blades, engine housings, landing gear | Boeing, Airbus, SpaceX |
+| **Titan Aerospace** | Turbine blades, engine housings, landing gear | Apex Aerospace, Horizon Aircraft, SpaceX |
 | **Titan Energy** | Wind turbine gearboxes, solar frames, valves | GE, Siemens, Shell |
 | **Titan Mobility** | EV motor housings, battery enclosures | Tesla, Ford, Rivian |
 | **Titan Industrial** | CNC parts, hydraulic pumps, bearings | Caterpillar, John Deere |
@@ -266,25 +266,25 @@ curl -X POST http://localhost:8080/api/chat \
 - Inventory Agent locates replacement bearing (SKU-BRG-7420)
 - System recommends emergency maintenance to prevent $12M downtime
 
-### 2. Boeing Expedite (Order Fulfillment)
+### 2. Apex Expedite (Order Fulfillment)
 
-> *"Boeing needs 500 turbine blade blanks ASAP for order TM-2024-45892..."*
+> *"Apex Aerospace needs 500 turbine blade blanks ASAP for order TM-2024-45892..."*
 
 ```bash
 curl -X POST http://localhost:8080/api/chat \
   -H "Content-Type: application/json" \
-  -d '{"message": "Boeing needs 500 turbine blade blanks ASAP - order TM-2024-45892"}'
+  -d '{"message": "Apex Aerospace needs 500 turbine blade blanks ASAP - order TM-2024-45892"}'
 ```
 
 **What happens:**
 - Order Agent validates contract terms and aerospace compliance
 - Inventory Agent finds stock: Phoenix 320 + Munich 400
 - Logistics Agent plans split air freight shipment
-- Communications Agent confirms ETA to Boeing
+- Communications Agent confirms ETA to Apex Aerospace
 
 ### 3. FAA Audit (Data Governance)
 
-> *"We need to trace titanium batch TI-2024-0892 used in Boeing 787 landing gear for an FAA audit..."*
+> *"We need to trace titanium batch TI-2024-0892 used in Apex widebody landing gear for an FAA audit..."*
 
 ```bash
 curl -X POST http://localhost:8080/api/chat \

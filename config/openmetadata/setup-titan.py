@@ -56,7 +56,7 @@ def create_domains():
     """Create Titan business domains."""
     domains = [
         {"name": "TitanAerospace", "displayName": "Titan Aerospace",
-         "description": "Turbine blades, engine housings, landing gear for Boeing, Airbus, SpaceX", "domainType": "Aggregate"},
+         "description": "Turbine blades, engine housings, landing gear for Apex Aerospace, Horizon Aircraft, SpaceX", "domainType": "Aggregate"},
         {"name": "TitanEnergy", "displayName": "Titan Energy",
          "description": "Wind turbine gearboxes, solar frames, pipeline valves for GE, Siemens", "domainType": "Aggregate"},
         {"name": "TitanMobility", "displayName": "Titan Mobility",
@@ -103,7 +103,7 @@ def create_glossary():
         {"name": "SKU", "displayName": "Stock Keeping Unit",
          "description": "Unique product identifier across Titan's 50,000+ part catalog"},
         {"name": "Expedite", "displayName": "Expedite Order",
-         "description": "Priority order requiring accelerated fulfillment (e.g., Boeing urgent requests)"},
+         "description": "Priority order requiring accelerated fulfillment (e.g., Apex Aerospace urgent requests)"},
         {"name": "FAA-Compliance", "displayName": "FAA Compliance",
          "description": "Federal Aviation Administration traceability requirements for aerospace parts"},
         {"name": "MaterialBatch", "displayName": "Material Batch",
@@ -264,7 +264,7 @@ def add_table_descriptions():
         "anomalies": "ML-detected anomalies and failure predictions. Drives predictive maintenance alerts. "
                     "PHX-CNC-007 has active warnings.",
         "maintenance_records": "Work orders and maintenance history for all equipment. Includes parts used and labor hours.",
-        "customers": "B2B customer registry including Boeing, Tesla, GE, and other major accounts.",
+        "customers": "B2B customer registry including Apex Aerospace, Tesla, GE, and other major accounts.",
         "orders": "B2B orders with expedite flags and delivery requirements.",
         "titan_facilities": "12 global manufacturing facilities (PHX, MUC, SHA, DET, ATL, TOK, SAO, LON, SYD, SEA, CHI, DAL).",
         "ml_model_coefficients": "Logistic regression coefficients for failure prediction model.",
