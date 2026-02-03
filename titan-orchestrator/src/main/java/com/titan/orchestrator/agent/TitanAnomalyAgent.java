@@ -48,7 +48,6 @@ public class TitanAnomalyAgent {
     // Action 1: Diagnose the anomaly
     // ═══════════════════════════════════════════════════════════════════════
 
-    @AchievesGoal(description = "Diagnose the equipment fault using predictive maintenance data")
     @Action(
         description = "Analyze equipment anomaly to determine fault type, RUL, and urgency",
         toolGroups = {"maintenance-tools"}
@@ -57,7 +56,6 @@ public class TitanAnomalyAgent {
         return doDiagnose("diagnoseAnomaly", input.event(), ai);
     }
 
-    @AchievesGoal(description = "Diagnose the equipment fault for a high-risk anomaly")
     @Action(
         description = "Analyze high-risk equipment anomaly to determine fault type, RUL, and urgency",
         toolGroups = {"maintenance-tools"}
@@ -111,7 +109,6 @@ public class TitanAnomalyAgent {
     // Action 3: Emergency shutdown (Branch 1 — IMMEDIATE path only)
     // ═══════════════════════════════════════════════════════════════════════
 
-    @AchievesGoal(description = "Halt equipment to prevent imminent failure")
     @Action(
         description = "Issue emergency shutdown for equipment with immediate failure risk",
         toolGroups = {"sensor-tools"}
@@ -135,7 +132,6 @@ public class TitanAnomalyAgent {
     // Action 4: Assess parts (two entry points for Branch 1 convergence)
     // ═══════════════════════════════════════════════════════════════════════
 
-    @AchievesGoal(description = "Assess parts availability after emergency shutdown")
     @Action(
         description = "Find compatible parts for shut-down equipment",
         toolGroups = {"inventory-tools"}
@@ -145,7 +141,6 @@ public class TitanAnomalyAgent {
         return doAssessParts(shutdown.diagnosis(), ai);
     }
 
-    @AchievesGoal(description = "Assess parts availability for diagnosed fault")
     @Action(
         description = "Find compatible parts and check local stock availability",
         toolGroups = {"inventory-tools"}
@@ -180,7 +175,6 @@ public class TitanAnomalyAgent {
     // Action 5: Cross-facility procurement (Branch 2 — PartsUnavailable only)
     // ═══════════════════════════════════════════════════════════════════════
 
-    @AchievesGoal(description = "Procure parts from another facility when local stock is insufficient")
     @Action(
         description = "Arrange cross-facility parts transfer for out-of-stock items",
         toolGroups = {"logistics-tools", "inventory-tools"}
@@ -215,7 +209,6 @@ public class TitanAnomalyAgent {
     // Action 6: Schedule maintenance (two entry points for Branch 2 convergence)
     // ═══════════════════════════════════════════════════════════════════════
 
-    @AchievesGoal(description = "Schedule maintenance with locally available parts")
     @Action(
         description = "Schedule emergency maintenance using available local parts",
         toolGroups = {"maintenance-tools"}
@@ -240,7 +233,6 @@ public class TitanAnomalyAgent {
         );
     }
 
-    @AchievesGoal(description = "Schedule maintenance after cross-facility procurement")
     @Action(
         description = "Schedule maintenance coordinated with incoming parts shipment",
         toolGroups = {"maintenance-tools"}
@@ -285,7 +277,6 @@ public class TitanAnomalyAgent {
     // Action 8: Verify compliance (Branch 3 — regulated path only)
     // ═══════════════════════════════════════════════════════════════════════
 
-    @AchievesGoal(description = "Verify regulatory compliance before maintenance proceeds")
     @Action(
         description = "Check compliance status and trace material batches for regulated equipment",
         toolGroups = {"governance-tools"}
