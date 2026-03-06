@@ -7,8 +7,8 @@
 
 spring:
   datasource:
-    url: ${vcap.services.titan-pg.credentials.jdbc-url}
-    username: ${vcap.services.titan-pg.credentials.username}
+    url: ${vcap.services.titan-pg.credentials.jdbcUrl}
+    username: ${vcap.services.titan-pg.credentials.user}
     password: ${vcap.services.titan-pg.credentials.password}
 
 server:
