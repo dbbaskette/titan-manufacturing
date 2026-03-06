@@ -30,18 +30,18 @@ spring:
         # agents are not yet reachable. Connections are made on first tool call.
         initialized: false
 
-# Embabel reads OPENAI_API_KEY / OPENAI_BASE_URL from env vars directly.
-# These are set in manifest.yml from vars.yml (extracted from titan-ai service-key).
-# Also set via Spring properties as fallback.
+# Embabel model alias must match one from its built-in openai-models.yml
+# (gpt-5, gpt-5-mini, gpt-4.1, etc.). The actual model sent to the API is
+# controlled by spring.ai.openai.chat.options.model above, not by this alias.
 embabel:
   agent:
     platform:
       models:
         openai:
-          api-key: ${OPENAI_API_KEY:}
-          base-url: ${OPENAI_BASE_URL:https://api.openai.com}
+          api-key: ${vcap.services.titan-ai.credentials.api_key:${OPENAI_API_KEY:}}
+          base-url: ${vcap.services.titan-ai.credentials.api_base:${OPENAI_BASE_URL:https://api.openai.com}}
   models:
-    default-llm: openai/gpt-oss-120b
+    default-llm: gpt-4.1
 
 server:
   port: 8080
