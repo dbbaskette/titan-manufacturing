@@ -2,8 +2,11 @@
 # Cloud Foundry Profile — Titan Orchestrator
 # =============================================================================
 # Activated by: SPRING_PROFILES_ACTIVE=cloud
-# LLM credentials provided by titan-ai (GenAI on Tanzu) via VCAP_SERVICES
-# Model: tanzu-gpt-oss-120b-v1025
+#
+# Credentials come from VCAP_SERVICES at runtime:
+#   - titan-ai (GenAI) → auto-wired by java-cfenv GenAIChatCfEnvProcessor
+#   - titan-pg (Postgres) → auto-wired by java-cfenv CfDataSourceEnvironmentPostProcessor
+#   - titan-rabbitmq → auto-wired by Spring Boot RabbitAutoConfiguration
 # =============================================================================
 
 spring:
@@ -15,19 +18,14 @@ spring:
     exclude:
       - com.embabel.agent.autoconfigure.models.anthropic.AgentAnthropicAutoConfiguration
   ai:
-    openai:
-      api-key: ${vcap.services.titan-ai.credentials.endpoint.api_key:${OPENAI_API_KEY:}}
-      base-url: ${vcap.services.titan-ai.credentials.endpoint.api_base:${OPENAI_BASE_URL:https://api.openai.com}}/openai
-      chat:
-        options:
-          model: ${vcap.services.titan-ai.credentials.model_name:openai/gpt-oss-120b}
     mcp:
       client:
         initialized: false
 
-# Embabel model alias must match one from its built-in openai-models.yml
-# (gpt-5, gpt-5-mini, gpt-4.1, etc.). The actual model sent to the API is
-# controlled by spring.ai.openai.chat.options.model above, not by this alias.
+# Embabel reads credentials separately from Spring AI — must be set explicitly.
+# The alias must match one from Embabel's built-in openai-models.yml catalog;
+# the actual model sent to the API is controlled by spring.ai.openai.chat.options.model
+# (auto-configured by java-cfenv from the titan-ai binding).
 embabel:
   agent:
     platform:

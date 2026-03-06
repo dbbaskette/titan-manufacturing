@@ -24,10 +24,9 @@
 #
 # Configuration (edit before running):
 #   See the CONFIGURATION section below, or set env vars:
-#     APPS_DOMAIN          (optional — auto-detected from foundation if not set)
-#     (Greenplum UPS replaced by titan-pg Tanzu Postgres until GP is available)
-#     GEMFIRE_SERVICE, GEMFIRE_PLAN,
-#     RABBITMQ_SERVICE, RABBITMQ_PLAN,
+#     APPS_DOMAIN          (optional — auto-detected from foundation)
+#     GEMFIRE_SERVICE, GEMFIRE_PLAN
+#     RABBITMQ_SERVICE, RABBITMQ_PLAN
 #     GENAI_SERVICE, GENAI_PLAN
 # =============================================================================
 
@@ -56,9 +55,6 @@ RABBITMQ_PLAN="${RABBITMQ_PLAN:-on-demand-plan}"
 
 GENAI_SERVICE="${GENAI_SERVICE:-genai}"
 GENAI_PLAN="${GENAI_PLAN:-tanzu-gpt-oss-120b-v1025}"
-
-# OpenAI API key — still needed as the credential for the GenAI proxy
-OPENAI_API_KEY="${OPENAI_API_KEY:-}"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # FLAGS
@@ -172,40 +168,22 @@ cf target | grep -E 'api endpoint|org:|space:' | sed 's/^/  /'
 # ── Auto-detect apps domain from the foundation ───────────────────────────
 if [ -z "$APPS_DOMAIN" ]; then
     info "Auto-detecting apps domain from foundation..."
-    # `cf domains` lists shared domains; pick the first shared domain that
-    # contains "apps." but is NOT the internal-only "apps.internal" domain
-    DETECTED=$(cf domains 2>/dev/null \
+    # List shared domains, exclude internal, prefer ones starting with "apps."
+    ALL_SHARED=$(cf domains 2>/dev/null \
         | grep -v "^Getting\|^name\|^---\|private\|apps\.internal" \
-        | awk '{print $1}' \
-        | grep "^apps\." \
-        | head -1)
+        | awk '{print $1}')
+    APPS_DOMAIN=$(echo "$ALL_SHARED" | grep "^apps\." | head -1)
+    [ -z "$APPS_DOMAIN" ] && APPS_DOMAIN=$(echo "$ALL_SHARED" | head -1)
 
-    if [ -z "$DETECTED" ]; then
-        # Fallback: first shared domain that is not apps.internal
-        DETECTED=$(cf domains 2>/dev/null \
-            | grep -v "^Getting\|^name\|^---\|private\|apps\.internal" \
-            | awk '{print $1}' \
-            | head -1)
-    fi
-
-    if [ -z "$DETECTED" ]; then
-        echo ""
-        echo "ERROR: Could not auto-detect apps domain. Set APPS_DOMAIN env var and retry."
-        echo "       Example: APPS_DOMAIN=apps.your-foundation.com ./cf-manifests/deploy.sh"
+    if [ -z "$APPS_DOMAIN" ]; then
+        echo "ERROR: Could not auto-detect apps domain. Set APPS_DOMAIN and retry."
         exit 1
     fi
-
-    APPS_DOMAIN="$DETECTED"
     ok "Auto-detected apps domain: $APPS_DOMAIN"
 else
     ok "Using provided apps domain: $APPS_DOMAIN"
 fi
 
-
-# Check OpenAI API key is set (used as credential for the GenAI proxy)
-if [ -z "$OPENAI_API_KEY" ]; then
-    warn "OPENAI_API_KEY is not set — the GenAI service binding may require it"
-fi
 
 ok "Pre-flight complete"
 
@@ -409,15 +387,10 @@ EOF
 ok "vars.yml written (apps-domain: ${APPS_DOMAIN})"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 5: PUSH APPLICATIONS
-# ─────────────────────────────────────────────────────────────────────────────
-
-# ─────────────────────────────────────────────────────────────────────────────
 # STEP 5: PUSH AGENTS + SUPPORTING APPS (before orchestrator)
 # ─────────────────────────────────────────────────────────────────────────────
-# The orchestrator connects to agents at startup via .apps.internal DNS.
 # Agents must be running and network policies in place before the orchestrator
-# starts, otherwise MCP client initialization will fail with UnresolvedAddressException.
+# starts — it connects to agents at startup via .apps.internal routes.
 
 step "Push Agents and Supporting Apps"
 cd "$PROJECT_ROOT"

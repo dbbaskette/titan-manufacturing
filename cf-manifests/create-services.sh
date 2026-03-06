@@ -4,28 +4,18 @@
 # =============================================================================
 # Usage: ./create-services.sh
 #
-# Before running:
-#   1. Update GREENPLUM_* variables below with your actual values
-#   2. Verify service plan names match your foundation (cf marketplace)
+# Verify service plan names match your foundation: cf marketplace
 # =============================================================================
 
 set -e
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CONFIGURATION — Update these values for your environment
+# CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────
 
 CF_ORG="${CF_ORG:-tech-marketing}"
 CF_SPACE="${CF_SPACE:-titan}"
 
-# Greenplum (off-platform) connection details
-GREENPLUM_HOST="greenplum.example.com"
-GREENPLUM_PORT="5432"
-GREENPLUM_DATABASE="titan-manufacturing"
-GREENPLUM_USER="gpadmin"
-GREENPLUM_PASSWORD="CHANGE_ME"
-
-# Service plan names (check `cf marketplace` for available plans)
 GEMFIRE_SERVICE="p-cloudcache"
 GEMFIRE_PLAN="extra-small"
 
@@ -63,7 +53,7 @@ echo ""
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. GemFire Service
 # ─────────────────────────────────────────────────────────────────────────────
-echo "[1/3] Creating GemFire service: titan-gemfire"
+echo "[1/4] Creating GemFire service: titan-gemfire"
 if cf service titan-gemfire > /dev/null 2>&1; then
     echo "      → Already exists, skipping"
 else
