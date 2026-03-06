@@ -1,0 +1,162 @@
+# =============================================================================
+# TITAN MANUFACTURING — Cloud Foundry Deployment Manifest
+# =============================================================================
+# Target: org=tech-marketing  space=titan
+#
+# Platform Services Required:
+#   - titan-gemfire    (GemFire service instance)
+#   - titan-rabbitmq   (RabbitMQ service instance)
+#   - titan-ai         (GenAI on Tanzu — tanzu-gpt-oss-120b-v1025)
+#
+# External Services (off-platform):
+#   - Greenplum Database (configured via user-provided service)
+#
+# Usage:
+#   cf push -f cf-manifests/manifest.yml --vars-file cf-manifests/vars.yml
+# =============================================================================
+
+applications:
+
+  # ===========================================================================
+  # TITAN ORCHESTRATOR — AI Agent Coordinator
+  # ===========================================================================
+  - name: titan-orchestrator
+    memory: 1G
+    instances: 1
+    path: ../titan-orchestrator/target/titan-orchestrator-1.0.0-SNAPSHOT.jar
+    buildpacks:
+      - java_buildpack_offline
+    env:
+      JBP_CONFIG_OPEN_JDK_JRE: '{ jre: { version: 21.+ } }'
+      JAVA_OPTS: -Djava.security.egd=file:///dev/urandom
+      SPRING_PROFILES_ACTIVE: cloud
+      # MCP Server URLs (internal routes — http only, no TLS on .apps.internal)
+      MCP_SERVERS_SENSOR: http://titan-sensor-agent.apps.internal:8080
+      MCP_SERVERS_MAINTENANCE: http://titan-maintenance-agent.apps.internal:8080
+      MCP_SERVERS_INVENTORY: http://titan-inventory-agent.apps.internal:8080
+      MCP_SERVERS_LOGISTICS: http://titan-logistics-agent.apps.internal:8080
+      MAINTENANCE_URL: http://titan-maintenance-agent.apps.internal:8080
+    services:
+      - titan-ai
+      - titan-greenplum-ups
+    routes:
+      - route: titan-orchestrator.((apps-domain))
+    health-check-type: http
+    health-check-http-endpoint: /actuator/health
+
+  # ===========================================================================
+  # MCP AGENT SERVERS
+  # ===========================================================================
+
+  # Sensor Agent — IoT sensor data monitoring
+  - name: titan-sensor-agent
+    memory: 512M
+    instances: 1
+    path: ../sensor-mcp-server/target/sensor-mcp-server-1.0.0-SNAPSHOT.jar
+    buildpacks:
+      - java_buildpack_offline
+    env:
+      JBP_CONFIG_OPEN_JDK_JRE: '{ jre: { version: 21.+ } }'
+      JAVA_OPTS: -Djava.security.egd=file:///dev/urandom
+      SPRING_PROFILES_ACTIVE: cloud
+      MQTT_ENABLED: "true"
+    services:
+      - titan-rabbitmq
+      - titan-greenplum-ups
+    routes:
+      - route: titan-sensor-agent.apps.internal
+    health-check-type: http
+    health-check-http-endpoint: /actuator/health
+
+  # Maintenance Agent — Predictive maintenance & ML scoring
+  - name: titan-maintenance-agent
+    memory: 768M
+    instances: 1
+    path: ../maintenance-mcp-server/target/maintenance-mcp-server-1.0.0-SNAPSHOT.jar
+    buildpacks:
+      - java_buildpack_offline
+    env:
+      JBP_CONFIG_OPEN_JDK_JRE: '{ jre: { version: 21.+ } }'
+      JAVA_OPTS: -Djava.security.egd=file:///dev/urandom
+      SPRING_PROFILES_ACTIVE: cloud
+    services:
+      - titan-rabbitmq
+      - titan-gemfire
+      - titan-greenplum-ups
+    routes:
+      - route: titan-maintenance-agent.apps.internal
+    health-check-type: http
+    health-check-http-endpoint: /actuator/health
+
+  # Inventory Agent — SKU and inventory management
+  - name: titan-inventory-agent
+    memory: 512M
+    instances: 1
+    path: ../inventory-mcp-server/target/inventory-mcp-server-1.0.0-SNAPSHOT.jar
+    buildpacks:
+      - java_buildpack_offline
+    env:
+      JBP_CONFIG_OPEN_JDK_JRE: '{ jre: { version: 21.+ } }'
+      JAVA_OPTS: -Djava.security.egd=file:///dev/urandom
+      SPRING_PROFILES_ACTIVE: cloud
+    services:
+      - titan-greenplum-ups
+    routes:
+      - route: titan-inventory-agent.apps.internal
+    health-check-type: http
+    health-check-http-endpoint: /actuator/health
+
+  # Logistics Agent — Shipping and tracking
+  - name: titan-logistics-agent
+    memory: 512M
+    instances: 1
+    path: ../logistics-mcp-server/target/logistics-mcp-server-1.0.0-SNAPSHOT.jar
+    buildpacks:
+      - java_buildpack_offline
+    env:
+      JBP_CONFIG_OPEN_JDK_JRE: '{ jre: { version: 21.+ } }'
+      JAVA_OPTS: -Djava.security.egd=file:///dev/urandom
+      SPRING_PROFILES_ACTIVE: cloud
+    services:
+      - titan-greenplum-ups
+    routes:
+      - route: titan-logistics-agent.apps.internal
+    health-check-type: http
+    health-check-http-endpoint: /actuator/health
+
+  # ===========================================================================
+  # SENSOR DATA GENERATOR — Simulated IoT telemetry
+  # ===========================================================================
+  - name: titan-sensor-generator
+    memory: 256M
+    instances: 1
+    path: ../sensor-data-generator/target/sensor-data-generator-1.0.0-SNAPSHOT.jar
+    buildpacks:
+      - java_buildpack_offline
+    env:
+      JBP_CONFIG_OPEN_JDK_JRE: '{ jre: { version: 21.+ } }'
+      JAVA_OPTS: -Djava.security.egd=file:///dev/urandom
+      SPRING_PROFILES_ACTIVE: cloud
+      EQUIPMENT_COUNT: "72"
+      FACILITIES: PHX,MUC,SHA,DET,ATL,DAL,LYN,MAN,MEX,SEO,SYD,TYO
+      INTERVAL_MS: "5000"
+    services:
+      - titan-rabbitmq
+    routes:
+      - route: titan-sensor-generator.((apps-domain))
+    health-check-type: http
+    health-check-http-endpoint: /actuator/health
+
+  # ===========================================================================
+  # TITAN DASHBOARD — React Frontend
+  # ===========================================================================
+  - name: titan-dashboard
+    memory: 128M
+    instances: 1
+    path: ../titan-dashboard/dist
+    buildpacks:
+      - staticfile_buildpack
+    routes:
+      - route: titan-dashboard.((apps-domain))
+    health-check-type: http
+    health-check-http-endpoint: /

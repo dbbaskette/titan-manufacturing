@@ -1,0 +1,487 @@
+#!/bin/bash
+# =============================================================================
+# TITAN MANUFACTURING — Full Cloud Foundry Deploy Script
+# =============================================================================
+#
+# Runs the complete deployment pipeline:
+#   1. Pre-flight checks (CF login, required tools)
+#   2. Create platform services (idempotent)
+#   3. Wait for GemFire to provision
+#   4. Build all Java applications and React dashboard
+#   5. Push all applications to CF
+#   6. Create network policies
+#   7. Verify deployment health
+#
+# Usage:
+#   ./cf-manifests/deploy.sh [OPTIONS]
+#
+# Options:
+#   --skip-services    Skip service creation (already exist)
+#   --skip-build       Skip Maven/npm build (artifacts already built)
+#   --skip-network     Skip network policy creation
+#   --skip-verify      Skip post-deploy health checks
+#   --help             Show this help
+#
+# Configuration (edit before running):
+#   See the CONFIGURATION section below, or set env vars:
+#     APPS_DOMAIN          (optional — auto-detected from foundation if not set)
+#     GREENPLUM_HOST, GREENPLUM_PORT, GREENPLUM_DATABASE,
+#     GREENPLUM_USER, GREENPLUM_PASSWORD,
+#     GEMFIRE_SERVICE, GEMFIRE_PLAN,
+#     RABBITMQ_SERVICE, RABBITMQ_PLAN,
+#     GENAI_SERVICE, GENAI_PLAN
+# =============================================================================
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CONFIGURATION — Update these or set as environment variables
+# ─────────────────────────────────────────────────────────────────────────────
+
+CF_ORG="${CF_ORG:-tech-marketing}"
+CF_SPACE="${CF_SPACE:-titan}"
+
+# APPS_DOMAIN is auto-detected from the foundation after CF login.
+# Override by setting this env var if auto-detection picks the wrong domain.
+APPS_DOMAIN="${APPS_DOMAIN:-}"
+
+# Greenplum (off-platform) connection details
+GREENPLUM_HOST="${GREENPLUM_HOST:-greenplum.example.com}"
+GREENPLUM_PORT="${GREENPLUM_PORT:-5432}"
+GREENPLUM_DATABASE="${GREENPLUM_DATABASE:-titan-manufacturing}"
+GREENPLUM_USER="${GREENPLUM_USER:-gpadmin}"
+GREENPLUM_PASSWORD="${GREENPLUM_PASSWORD:-CHANGE_ME}"
+
+# Service plan names — check `cf marketplace` for available plans on your foundation
+GEMFIRE_SERVICE="${GEMFIRE_SERVICE:-p-cloudcache}"
+GEMFIRE_PLAN="${GEMFIRE_PLAN:-extra-small}"
+
+RABBITMQ_SERVICE="${RABBITMQ_SERVICE:-p.rabbitmq}"
+RABBITMQ_PLAN="${RABBITMQ_PLAN:-on-demand-plan}"
+
+GENAI_SERVICE="${GENAI_SERVICE:-genai}"
+GENAI_PLAN="${GENAI_PLAN:-tanzu-gpt-oss-120b-v1025}"
+
+# OpenAI API key — still needed as the credential for the GenAI proxy
+OPENAI_API_KEY="${OPENAI_API_KEY:-}"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FLAGS
+# ─────────────────────────────────────────────────────────────────────────────
+
+SKIP_SERVICES=false
+SKIP_BUILD=false
+SKIP_NETWORK=false
+SKIP_VERIFY=false
+
+for arg in "$@"; do
+    case $arg in
+        --skip-services) SKIP_SERVICES=true ;;
+        --skip-build)    SKIP_BUILD=true ;;
+        --skip-network)  SKIP_NETWORK=true ;;
+        --skip-verify)   SKIP_VERIFY=true ;;
+        --help)
+            sed -n '/^# Usage:/,/^# ====/p' "$0" | grep -v "^# ====" | sed 's/^# //'
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $arg. Use --help for usage."
+            exit 1
+            ;;
+    esac
+done
+
+# ─────────────────────────────────────────────────────────────────────────────
+# HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
+
+STEP=0
+ERRORS=0
+
+step() {
+    STEP=$((STEP + 1))
+    echo ""
+    echo "══════════════════════════════════════════════"
+    echo "  Step $STEP: $1"
+    echo "══════════════════════════════════════════════"
+}
+
+ok()   { echo "  ✓ $1"; }
+info() { echo "  → $1"; }
+warn() { echo "  ⚠ $1"; }
+fail() { echo "  ✗ $1"; ERRORS=$((ERRORS + 1)); }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BANNER
+# ─────────────────────────────────────────────────────────────────────────────
+
+echo ""
+echo "╔══════════════════════════════════════════════╗"
+echo "║   TITAN MANUFACTURING 5.0 — CF Deploy        ║"
+echo "║   Forging the future with intelligent mfg    ║"
+echo "╚══════════════════════════════════════════════╝"
+echo ""
+echo "  Project root : $PROJECT_ROOT"
+echo "  CF Org       : $CF_ORG"
+echo "  CF Space     : $CF_SPACE"
+echo "  Apps domain  : ${APPS_DOMAIN:-auto-detect from foundation}"
+echo "  Skip services: $SKIP_SERVICES"
+echo "  Skip build   : $SKIP_BUILD"
+echo "  Skip network : $SKIP_NETWORK"
+echo "  Skip verify  : $SKIP_VERIFY"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STEP 1: PRE-FLIGHT CHECKS
+# ─────────────────────────────────────────────────────────────────────────────
+
+step "Pre-flight Checks"
+
+# Check required tools
+for tool in cf mvn npm curl; do
+    if command -v "$tool" > /dev/null 2>&1; then
+        ok "$tool found ($(command -v $tool))"
+    else
+        fail "$tool not found — please install it"
+    fi
+done
+
+# Abort now if missing tools
+if [ $ERRORS -gt 0 ]; then
+    echo ""
+    echo "ERROR: Missing required tools. Aborting."
+    exit 1
+fi
+
+# Check CF login
+if ! cf target > /dev/null 2>&1; then
+    echo ""
+    echo "ERROR: Not logged into Cloud Foundry. Run 'cf login' first."
+    exit 1
+fi
+
+# Target the correct org and space
+info "Targeting org: $CF_ORG / space: $CF_SPACE"
+if ! cf target -o "$CF_ORG" -s "$CF_SPACE" > /dev/null 2>&1; then
+    echo ""
+    echo "ERROR: Could not target org '$CF_ORG' / space '$CF_SPACE'."
+    echo "       Verify the org and space exist and you have access:"
+    echo "         cf orgs"
+    echo "         cf spaces"
+    exit 1
+fi
+ok "Targeted org: $CF_ORG / space: $CF_SPACE"
+
+echo ""
+cf target | grep -E 'api endpoint|org:|space:' | sed 's/^/  /'
+
+# ── Auto-detect apps domain from the foundation ───────────────────────────
+if [ -z "$APPS_DOMAIN" ]; then
+    info "Auto-detecting apps domain from foundation..."
+    # `cf domains` lists shared domains; pick the first one containing "apps."
+    # Falls back to any shared domain if none match "apps."
+    DETECTED=$(cf domains 2>/dev/null \
+        | grep -v "^Getting\|^name\|^---\|private" \
+        | awk '{print $1}' \
+        | grep "^apps\." \
+        | head -1)
+
+    if [ -z "$DETECTED" ]; then
+        # Fallback: first shared domain listed
+        DETECTED=$(cf domains 2>/dev/null \
+            | grep -v "^Getting\|^name\|^---\|private" \
+            | awk '{print $1}' \
+            | head -1)
+    fi
+
+    if [ -z "$DETECTED" ]; then
+        echo ""
+        echo "ERROR: Could not auto-detect apps domain. Set APPS_DOMAIN env var and retry."
+        echo "       Example: APPS_DOMAIN=apps.your-foundation.com ./cf-manifests/deploy.sh"
+        exit 1
+    fi
+
+    APPS_DOMAIN="$DETECTED"
+    ok "Auto-detected apps domain: $APPS_DOMAIN"
+else
+    ok "Using provided apps domain: $APPS_DOMAIN"
+fi
+
+# Check Greenplum credentials are configured
+if [ "$GREENPLUM_PASSWORD" = "CHANGE_ME" ]; then
+    warn "GREENPLUM_PASSWORD is still CHANGE_ME — update it before deploying"
+fi
+
+# Check OpenAI API key is set (used as credential for the GenAI proxy)
+if [ -z "$OPENAI_API_KEY" ]; then
+    warn "OPENAI_API_KEY is not set — the GenAI service binding may require it"
+fi
+
+ok "Pre-flight complete"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STEP 2: CREATE SERVICES
+# ─────────────────────────────────────────────────────────────────────────────
+
+if [ "$SKIP_SERVICES" = true ]; then
+    step "Create Services (SKIPPED)"
+    info "Using --skip-services, assuming titan-gemfire, titan-rabbitmq, titan-ai, titan-greenplum-ups exist"
+else
+    step "Create Platform Services"
+
+    # GemFire
+    info "Creating titan-gemfire ($GEMFIRE_SERVICE / $GEMFIRE_PLAN)..."
+    if cf service titan-gemfire > /dev/null 2>&1; then
+        ok "titan-gemfire already exists"
+    else
+        cf create-service "$GEMFIRE_SERVICE" "$GEMFIRE_PLAN" titan-gemfire
+        ok "titan-gemfire created (provisioning asynchronously)"
+    fi
+
+    # RabbitMQ
+    info "Creating titan-rabbitmq ($RABBITMQ_SERVICE / $RABBITMQ_PLAN)..."
+    if cf service titan-rabbitmq > /dev/null 2>&1; then
+        ok "titan-rabbitmq already exists"
+    else
+        cf create-service "$RABBITMQ_SERVICE" "$RABBITMQ_PLAN" titan-rabbitmq
+        ok "titan-rabbitmq created"
+    fi
+
+    # GenAI
+    info "Creating titan-ai ($GENAI_SERVICE / $GENAI_PLAN)..."
+    if cf service titan-ai > /dev/null 2>&1; then
+        ok "titan-ai already exists"
+    else
+        cf create-service "$GENAI_SERVICE" "$GENAI_PLAN" titan-ai
+        ok "titan-ai created"
+    fi
+
+    # Greenplum user-provided
+    info "Creating titan-greenplum-ups (user-provided)..."
+    if cf service titan-greenplum-ups > /dev/null 2>&1; then
+        ok "titan-greenplum-ups already exists"
+    else
+        cf create-user-provided-service titan-greenplum-ups -p "{
+            \"uri\":      \"jdbc:postgresql://${GREENPLUM_HOST}:${GREENPLUM_PORT}/${GREENPLUM_DATABASE}\",
+            \"hostname\": \"${GREENPLUM_HOST}\",
+            \"port\":     \"${GREENPLUM_PORT}\",
+            \"database\": \"${GREENPLUM_DATABASE}\",
+            \"username\": \"${GREENPLUM_USER}\",
+            \"password\": \"${GREENPLUM_PASSWORD}\"
+        }"
+        ok "titan-greenplum-ups created"
+    fi
+
+    # ── Wait for GemFire to provision ─────────────────────────────────────────
+    step "Wait for GemFire Provisioning"
+    info "GemFire can take several minutes to provision. Polling every 15s..."
+
+    GEMFIRE_TIMEOUT=600  # 10 minutes max
+    GEMFIRE_ELAPSED=0
+
+    while true; do
+        STATUS=$(cf service titan-gemfire 2>/dev/null | grep -E "^status:" | awk '{print $2, $3, $4}' | xargs)
+
+        if echo "$STATUS" | grep -q "create succeeded"; then
+            ok "titan-gemfire is ready ($STATUS)"
+            break
+        elif echo "$STATUS" | grep -q "create failed"; then
+            fail "titan-gemfire provisioning failed: $STATUS"
+            echo "  Check: cf service titan-gemfire"
+            exit 1
+        elif [ $GEMFIRE_ELAPSED -ge $GEMFIRE_TIMEOUT ]; then
+            fail "Timed out waiting for titan-gemfire after ${GEMFIRE_TIMEOUT}s (status: $STATUS)"
+            echo "  Check manually: cf service titan-gemfire"
+            echo "  Then re-run with --skip-services --skip-build"
+            exit 1
+        else
+            info "Status: $STATUS — waiting 15s... (${GEMFIRE_ELAPSED}s elapsed)"
+            sleep 15
+            GEMFIRE_ELAPSED=$((GEMFIRE_ELAPSED + 15))
+        fi
+    done
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STEP 3: BUILD APPLICATIONS
+# ─────────────────────────────────────────────────────────────────────────────
+
+if [ "$SKIP_BUILD" = true ]; then
+    step "Build Applications (SKIPPED)"
+    info "Using --skip-build, assuming artifacts are already built"
+else
+    step "Build Java Applications"
+    cd "$PROJECT_ROOT"
+    info "Running mvn clean package -DskipTests..."
+    mvn clean package -DskipTests -q
+    ok "titan-orchestrator"
+    ok "sensor-mcp-server"
+    ok "maintenance-mcp-server"
+    ok "inventory-mcp-server"
+    ok "logistics-mcp-server"
+    ok "sensor-data-generator"
+
+    step "Build React Dashboard"
+    cd "$PROJECT_ROOT/titan-dashboard"
+    if [ ! -d "node_modules" ]; then
+        info "Installing npm dependencies..."
+        npm ci --legacy-peer-deps -q
+    fi
+    npm run build --silent
+    cp Staticfile dist/
+    ok "titan-dashboard (dist/)"
+    cd "$PROJECT_ROOT"
+
+    # Verify all artifacts exist
+    step "Verify Build Artifacts"
+    MISSING=0
+    check_artifact() {
+        if [ -f "$PROJECT_ROOT/$1" ]; then
+            SIZE=$(du -h "$PROJECT_ROOT/$1" | cut -f1)
+            ok "$2 ($SIZE)"
+        else
+            fail "$2 — NOT FOUND at $1"
+            MISSING=$((MISSING + 1))
+        fi
+    }
+
+    check_artifact "titan-orchestrator/target/titan-orchestrator-1.0.0-SNAPSHOT.jar"       "titan-orchestrator"
+    check_artifact "sensor-mcp-server/target/sensor-mcp-server-1.0.0-SNAPSHOT.jar"         "sensor-mcp-server"
+    check_artifact "maintenance-mcp-server/target/maintenance-mcp-server-1.0.0-SNAPSHOT.jar" "maintenance-mcp-server"
+    check_artifact "inventory-mcp-server/target/inventory-mcp-server-1.0.0-SNAPSHOT.jar"   "inventory-mcp-server"
+    check_artifact "logistics-mcp-server/target/logistics-mcp-server-1.0.0-SNAPSHOT.jar"   "logistics-mcp-server"
+    check_artifact "sensor-data-generator/target/sensor-data-generator-1.0.0-SNAPSHOT.jar" "sensor-data-generator"
+
+    if [ -f "$PROJECT_ROOT/titan-dashboard/dist/index.html" ]; then
+        ok "titan-dashboard (dist/)"
+    else
+        fail "titan-dashboard dist/ — not found"
+        MISSING=$((MISSING + 1))
+    fi
+
+    if [ $MISSING -gt 0 ]; then
+        echo ""
+        echo "ERROR: $MISSING build artifact(s) missing. Aborting deploy."
+        exit 1
+    fi
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STEP 4: UPDATE VARS FILE
+# ─────────────────────────────────────────────────────────────────────────────
+
+step "Update vars.yml"
+cd "$PROJECT_ROOT"
+
+# Write vars.yml with all substitution values
+cat > cf-manifests/vars.yml << EOF
+# =============================================================================
+# TITAN MANUFACTURING — Cloud Foundry Variables
+# =============================================================================
+# Auto-generated by deploy.sh on $(date)
+# =============================================================================
+
+apps-domain: ${APPS_DOMAIN}
+EOF
+
+ok "vars.yml written (apps-domain: ${APPS_DOMAIN})"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STEP 5: PUSH APPLICATIONS
+# ─────────────────────────────────────────────────────────────────────────────
+
+step "Push Applications to CF"
+cd "$PROJECT_ROOT"
+info "Running cf push..."
+cf push -f cf-manifests/manifest.yml --vars-file cf-manifests/vars.yml
+
+ok "All applications pushed"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STEP 6: NETWORK POLICIES
+# ─────────────────────────────────────────────────────────────────────────────
+
+if [ "$SKIP_NETWORK" = true ]; then
+    step "Network Policies (SKIPPED)"
+    info "Using --skip-network"
+else
+    step "Create Network Policies"
+    info "Allowing orchestrator to reach internal MCP agents..."
+
+    add_policy() {
+        local SRC=$1 DST=$2 PORT=$3
+        if cf network-policies 2>/dev/null | grep -q "$SRC.*$DST.*$PORT"; then
+            ok "Policy $SRC → $DST:$PORT already exists"
+        else
+            cf add-network-policy "$SRC" "$DST" --protocol tcp --port "$PORT"
+            ok "Policy $SRC → $DST:$PORT created"
+        fi
+    }
+
+    add_policy titan-orchestrator titan-sensor-agent      8080
+    add_policy titan-orchestrator titan-maintenance-agent 8080
+    add_policy titan-orchestrator titan-inventory-agent   8080
+    add_policy titan-orchestrator titan-logistics-agent   8080
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STEP 7: VERIFY DEPLOYMENT
+# ─────────────────────────────────────────────────────────────────────────────
+
+if [ "$SKIP_VERIFY" = true ]; then
+    step "Health Checks (SKIPPED)"
+    info "Using --skip-verify"
+else
+    step "Health Checks"
+    info "Waiting 15s for apps to fully start..."
+    sleep 15
+
+    check_health() {
+        local NAME=$1 URL=$2
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$URL" 2>/dev/null || echo "000")
+        if [ "$HTTP_CODE" = "200" ]; then
+            ok "$NAME → HTTP $HTTP_CODE ($URL)"
+        else
+            warn "$NAME → HTTP $HTTP_CODE ($URL) — may still be starting"
+        fi
+    }
+
+    check_health "titan-orchestrator health" "https://titan-orchestrator.${APPS_DOMAIN}/actuator/health"
+    check_health "titan-dashboard"           "https://titan-dashboard.${APPS_DOMAIN}/"
+    check_health "titan-sensor-generator"    "https://titan-sensor-generator.${APPS_DOMAIN}/actuator/health"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FINAL SUMMARY
+# ─────────────────────────────────────────────────────────────────────────────
+
+echo ""
+echo "╔══════════════════════════════════════════════╗"
+echo "║   Deployment Complete                        ║"
+echo "╚══════════════════════════════════════════════╝"
+echo ""
+echo "  App Status:"
+cf apps | tail -n +3 | sed 's/^/    /'
+echo ""
+echo "  Access Points:"
+echo "    Dashboard  → https://titan-dashboard.${APPS_DOMAIN}"
+echo "    API        → https://titan-orchestrator.${APPS_DOMAIN}/api/chat"
+echo "    Generator  → https://titan-sensor-generator.${APPS_DOMAIN}/api/generator/status"
+echo ""
+echo "  Verify services:"
+echo "    cf services"
+echo ""
+echo "  Watch logs:"
+echo "    cf logs titan-orchestrator --recent"
+echo "    cf logs titan-maintenance-agent --recent"
+echo ""
+
+if [ $ERRORS -gt 0 ]; then
+    echo "  ⚠ Completed with $ERRORS warning(s). Review output above."
+    exit 1
+fi
+
+echo "  ✓ All steps completed successfully."
+echo ""

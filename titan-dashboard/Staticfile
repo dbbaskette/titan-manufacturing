@@ -1,0 +1,3 @@
+# Staticfile buildpack configuration for React SPA
+pushstate: enabled
+force_https: true

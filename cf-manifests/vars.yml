@@ -1,0 +1,8 @@
+# =============================================================================
+# TITAN MANUFACTURING — Cloud Foundry Variables
+# =============================================================================
+# apps-domain is auto-detected and written by deploy.sh at deploy time.
+# You can override by setting: APPS_DOMAIN=apps.your-foundation.com
+# =============================================================================
+
+apps-domain: apps.example.com

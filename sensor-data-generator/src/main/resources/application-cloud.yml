@@ -1,0 +1,15 @@
+# =============================================================================
+# Cloud Foundry Profile — Sensor Data Generator
+# =============================================================================
+# Activated by: SPRING_PROFILES_ACTIVE=cloud
+# Reads credentials from VCAP_SERVICES bound services
+# =============================================================================
+
+# RabbitMQ MQTT - credentials injected from titan-rabbitmq service binding
+mqtt:
+  broker: ${vcap.services.titan-rabbitmq.credentials.protocols.mqtt.uri:tcp://localhost:1883}
+  username: ${vcap.services.titan-rabbitmq.credentials.protocols.mqtt.username:guest}
+  password: ${vcap.services.titan-rabbitmq.credentials.protocols.mqtt.password:guest}
+
+server:
+  port: 8080

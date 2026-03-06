@@ -1,0 +1,21 @@
+# =============================================================================
+# Cloud Foundry Profile — Sensor MCP Server
+# =============================================================================
+# Activated by: SPRING_PROFILES_ACTIVE=cloud
+# Reads credentials from VCAP_SERVICES bound services
+# =============================================================================
+
+spring:
+  datasource:
+    url: ${vcap.services.titan-greenplum-ups.credentials.uri}
+    username: ${vcap.services.titan-greenplum-ups.credentials.username}
+    password: ${vcap.services.titan-greenplum-ups.credentials.password}
+
+# RabbitMQ MQTT - credentials injected from titan-rabbitmq service binding
+mqtt:
+  broker: ${vcap.services.titan-rabbitmq.credentials.protocols.mqtt.uri:tcp://localhost:1883}
+  username: ${vcap.services.titan-rabbitmq.credentials.protocols.mqtt.username:guest}
+  password: ${vcap.services.titan-rabbitmq.credentials.protocols.mqtt.password:guest}
+
+server:
+  port: 8080

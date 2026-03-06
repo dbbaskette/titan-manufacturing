@@ -1,0 +1,30 @@
+# =============================================================================
+# Cloud Foundry Profile — Maintenance MCP Server
+# =============================================================================
+# Activated by: SPRING_PROFILES_ACTIVE=cloud
+# Reads credentials from VCAP_SERVICES bound services
+# =============================================================================
+
+spring:
+  datasource:
+    url: ${vcap.services.titan-greenplum-ups.credentials.uri}
+    username: ${vcap.services.titan-greenplum-ups.credentials.username}
+    password: ${vcap.services.titan-greenplum-ups.credentials.password}
+
+# RabbitMQ MQTT - credentials injected from titan-rabbitmq service binding
+mqtt:
+  broker: ${vcap.services.titan-rabbitmq.credentials.protocols.mqtt.uri:tcp://localhost:1883}
+  username: ${vcap.services.titan-rabbitmq.credentials.protocols.mqtt.username:guest}
+  password: ${vcap.services.titan-rabbitmq.credentials.protocols.mqtt.password:guest}
+
+# GemFire - credentials injected from titan-gemfire service binding
+gemfire:
+  locator:
+    host: ${vcap.services.titan-gemfire.credentials.locators[0].host:localhost}
+    port: ${vcap.services.titan-gemfire.credentials.locators[0].port:10334}
+  security:
+    username: ${vcap.services.titan-gemfire.credentials.users[0].username:}
+    password: ${vcap.services.titan-gemfire.credentials.users[0].password:}
+
+server:
+  port: 8080

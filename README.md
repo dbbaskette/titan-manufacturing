@@ -16,6 +16,7 @@
   <img src="https://img.shields.io/badge/React-19-61DAFB?logo=react" alt="React">
   <img src="https://img.shields.io/badge/GemFire-PMML%20Scoring-00ADD8" alt="GemFire">
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT License">
+  <img src="https://img.shields.io/badge/Cloud%20Foundry-Tanzu-0D9488?logo=cloudfoundry" alt="Cloud Foundry">
 </p>
 
 ---
@@ -584,6 +585,7 @@ titan-manufacturing/
 | **Data Catalog** | OpenMetadata 1.3 | Governance & lineage |
 | **Runtime** | Java 21 + Spring Boot 3.4 | Application framework |
 | **Containers** | Docker Compose | Development deployment |
+| **Cloud** | Tanzu Application Service (CF) | Production deployment |
 
 ---
 
@@ -697,6 +699,223 @@ The sensor data generator simulates realistic failure patterns calibrated agains
 **Cycle timing**: At 1x speed (5s ticks), patterns reach HIGH cap in 6–8 minutes. At 10x speed, 40–60 seconds.
 
 **Calibration basis**: Model coefficients — `vibration_trend_rate` (106.2), `rpm_normalized` (−57.6), `pressure_normalized` (−54.6), `vibration_normalized` (44.2), `temperature_trend_rate` (42.6), `temperature_normalized` (28.7). Degradation rates push normalized features far enough from baseline to shift the logit by ~24 points.
+
+---
+
+## Cloud Foundry Deployment
+
+In addition to Docker Compose, Titan Manufacturing can be deployed to Cloud Foundry (Tanzu Application Service). All deployment files live in `cf-manifests/`.
+
+### Architecture on CF
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Public Routes (apps-domain)                                        │
+│  titan-orchestrator   titan-sensor-generator   titan-dashboard      │
+└────────────────────┬─────────────────────────────────────────────────┘
+                     │ CF Internal Network (apps.internal)
+┌────────────────────▼─────────────────────────────────────────────────┐
+│  titan-sensor-agent   titan-maintenance-agent                       │
+│  titan-inventory-agent   titan-logistics-agent                      │
+└────────────────────┬─────────────────────────────────────────────────┘
+                     │ Platform Services
+┌────────────────────▼─────────────────────────────────────────────────┐
+│  titan-rabbitmq (RabbitMQ)   titan-gemfire (GemFire)                │
+│  titan-ai (GenAI)   titan-greenplum-ups (user-provided)             │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+MCP agent servers use **internal routes** (`.apps.internal`) so they are not exposed to the public internet. Only the orchestrator, dashboard, and sensor generator have public routes. Network policies allow the orchestrator to reach agents over the internal network.
+
+### CF Services Required
+
+| Service Name | Type | Used By |
+|---|---|---|
+| `titan-gemfire` | Platform — VMware GemFire | maintenance-agent |
+| `titan-rabbitmq` | Platform — RabbitMQ | sensor-agent, maintenance-agent, sensor-generator |
+| `titan-ai` | Platform — GenAI | orchestrator |
+| `titan-greenplum-ups` | User-Provided (off-platform Greenplum) | all MCP agents |
+
+### Prerequisites
+
+- CF CLI installed and logged in (`cf login`)
+- Java 21, Maven 3.9+, Node 20+
+- Access to a Tanzu Application Service foundation
+- Greenplum database accessible from the CF network
+
+### One-Command Deploy
+
+The `deploy.sh` script runs the complete pipeline — services, build, push, network policies, and health checks:
+
+```bash
+# Set your configuration as environment variables
+export APPS_DOMAIN=apps.your-foundation.com
+export GREENPLUM_HOST=greenplum.your-host.com
+export GREENPLUM_PASSWORD=your-password
+export GEMFIRE_PLAN=dev-plan       # check: cf marketplace -e p-cloudcache
+export RABBITMQ_PLAN=standard      # check: cf marketplace -e p-rabbitmq
+export GENAI_PLAN=standard         # check: cf marketplace -e genai
+
+# Run the full deploy
+./cf-manifests/deploy.sh
+```
+
+**Flags to skip stages if partially complete:**
+
+```bash
+./cf-manifests/deploy.sh --skip-services   # services already exist
+./cf-manifests/deploy.sh --skip-build      # JARs already built
+./cf-manifests/deploy.sh --skip-services --skip-build   # push only
+./cf-manifests/deploy.sh --help            # show all options
+```
+
+### Manual Step-by-Step Deploy
+
+Edit `cf-manifests/create-services.sh` with your Greenplum credentials and service plan names, then run:
+
+```bash
+# Check available plans on your foundation
+cf marketplace -e p-cloudcache
+cf marketplace -e p-rabbitmq
+cf marketplace -e genai
+
+# Edit the script with your plan names and Greenplum details
+vim cf-manifests/create-services.sh
+
+# Create all services
+./cf-manifests/create-services.sh
+```
+
+Or create services manually:
+
+```bash
+# Platform services
+cf create-service p-cloudcache <plan> titan-gemfire
+cf create-service p-rabbitmq   <plan> titan-rabbitmq
+cf create-service genai        <plan> titan-ai
+
+# Greenplum user-provided service (off-platform)
+cf create-user-provided-service titan-greenplum-ups -p '{
+  "uri":      "jdbc:postgresql://YOUR_HOST:5432/titan-manufacturing",
+  "hostname": "YOUR_HOST",
+  "port":     "5432",
+  "database": "titan-manufacturing",
+  "username": "gpadmin",
+  "password": "YOUR_PASSWORD"
+}'
+```
+
+> **Note:** GemFire provisioning can take several minutes. Wait until `cf service titan-gemfire` shows `create succeeded` before deploying.
+
+### Step 2 — Build Applications
+
+```bash
+./cf-manifests/build-apps.sh
+```
+
+This runs `mvn clean package -DskipTests` for all Java modules and `npm run build` for the dashboard.
+
+### Step 3 — Configure Your Domain
+
+Edit `cf-manifests/vars.yml`:
+
+```yaml
+apps-domain: apps.your-foundation.com
+```
+
+### Step 4 — Deploy
+
+```bash
+cf push -f cf-manifests/manifest.yml --vars-file cf-manifests/vars.yml
+```
+
+### Step 5 — Create Network Policies
+
+MCP agents use internal routes. Allow the orchestrator to reach them:
+
+```bash
+cf add-network-policy titan-orchestrator titan-sensor-agent      --protocol tcp --port 8080
+cf add-network-policy titan-orchestrator titan-maintenance-agent  --protocol tcp --port 8080
+cf add-network-policy titan-orchestrator titan-inventory-agent   --protocol tcp --port 8080
+cf add-network-policy titan-orchestrator titan-logistics-agent   --protocol tcp --port 8080
+```
+
+### Step 6 — Verify
+
+```bash
+# All apps running
+cf apps
+
+# Services bound
+cf services
+
+# Health checks
+curl https://titan-orchestrator.apps.your-foundation.com/actuator/health
+curl https://titan-dashboard.apps.your-foundation.com/
+```
+
+### CF Access Points
+
+| Service | URL |
+|---------|-----|
+| **Titan Dashboard** | `https://titan-dashboard.<apps-domain>` |
+| **Titan API** | `https://titan-orchestrator.<apps-domain>` |
+| **Sensor Generator API** | `https://titan-sensor-generator.<apps-domain>` |
+| Sensor Agent (internal) | `http://titan-sensor-agent.apps.internal:8080` |
+| Maintenance Agent (internal) | `http://titan-maintenance-agent.apps.internal:8080` |
+| Inventory Agent (internal) | `http://titan-inventory-agent.apps.internal:8080` |
+| Logistics Agent (internal) | `http://titan-logistics-agent.apps.internal:8080` |
+
+### How CF Credentials Work
+
+Each application includes an `application-cloud.yml` profile (activated by `SPRING_PROFILES_ACTIVE=cloud`) that reads credentials from `VCAP_SERVICES` injected by CF:
+
+| Application | Reads From |
+|---|---|
+| MCP agents (DB) | `vcap.services.titan-greenplum-ups.credentials.*` |
+| MCP agents (MQTT) | `vcap.services.titan-rabbitmq.credentials.protocols.mqtt.*` |
+| maintenance-agent (GemFire) | `vcap.services.titan-gemfire.credentials.locators[0].*` |
+| orchestrator (LLM) | `vcap.services.titan-ai.credentials.*` |
+
+### CF Files Reference
+
+| File | Purpose |
+|------|---------|
+| `cf-manifests/deploy.sh` | **Full end-to-end deploy script** |
+| `cf-manifests/manifest.yml` | Main deployment manifest (7 applications) |
+| `cf-manifests/vars.yml` | Domain variable substitution |
+| `cf-manifests/create-services.sh` | Creates all 4 required services (standalone) |
+| `cf-manifests/build-apps.sh` | Builds all applications for CF deployment (standalone) |
+| `cf-manifests/SERVICES.md` | Detailed service setup documentation |
+| `titan-dashboard/Staticfile` | Enables SPA push-state routing on staticfile buildpack |
+| `*/src/main/resources/application-cloud.yml` | Per-service CF credential mapping |
+
+### CF Troubleshooting
+
+**Apps fail to start — database connection error**
+```bash
+cf env titan-sensor-agent | grep -A5 titan-greenplum-ups
+# Verify credentials are present and URI is reachable from CF network
+```
+
+**Orchestrator can't reach MCP agents**
+```bash
+cf network-policies
+# Add missing policies if not shown
+cf add-network-policy titan-orchestrator titan-sensor-agent --protocol tcp --port 8080
+```
+
+**GemFire connection fails in maintenance-agent**
+```bash
+cf logs titan-maintenance-agent --recent | grep -i gemfire
+cf service titan-gemfire   # Must show "create succeeded"
+```
+
+**MQTT not connecting (RabbitMQ)**
+```bash
+cf env titan-sensor-generator | grep -A20 titan-rabbitmq
+# Check protocols.mqtt.uri is present in VCAP_SERVICES
+```
 
 ---
 

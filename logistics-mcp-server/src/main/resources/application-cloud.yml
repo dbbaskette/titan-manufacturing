@@ -1,0 +1,15 @@
+# =============================================================================
+# Cloud Foundry Profile — Logistics MCP Server
+# =============================================================================
+# Activated by: SPRING_PROFILES_ACTIVE=cloud
+# Reads credentials from VCAP_SERVICES bound services
+# =============================================================================
+
+spring:
+  datasource:
+    url: ${vcap.services.titan-greenplum-ups.credentials.uri}
+    username: ${vcap.services.titan-greenplum-ups.credentials.username}
+    password: ${vcap.services.titan-greenplum-ups.credentials.password}
+
+server:
+  port: 8080
