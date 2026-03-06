@@ -14,7 +14,6 @@ spring:
   autoconfigure:
     exclude:
       - com.embabel.agent.autoconfigure.models.anthropic.AgentAnthropicAutoConfiguration
-      - org.springframework.boot.autoconfigure.amqp.RabbitAutoConfiguration
   ai:
     openai:
       api-key: ${vcap.services.titan-ai.credentials.endpoint.api_key:${OPENAI_API_KEY:}}

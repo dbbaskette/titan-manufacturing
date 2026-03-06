@@ -37,8 +37,7 @@ applications:
     services:
       - titan-ai
       - titan-pg
-    # routes:
-    #   - route: titan-orchestrator.((apps-domain))
+      - titan-rabbitmq
     health-check-type: http
     health-check-http-endpoint: /actuator/health
 
