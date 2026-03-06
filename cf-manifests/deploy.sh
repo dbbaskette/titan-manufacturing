@@ -279,7 +279,7 @@ else
             local STATE
             STATE=$(service_state "$SVC")
 
-            if echo "$STATE" | grep -qi "succeeded"; then
+            if echo "$STATE" | grep -qi "succeed"; then
                 ok "$SVC is ready"
                 return 0
             elif echo "$STATE" | grep -qi "failed"; then
