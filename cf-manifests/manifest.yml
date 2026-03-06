@@ -7,9 +7,7 @@
 #   - titan-gemfire    (GemFire service instance)
 #   - titan-rabbitmq   (RabbitMQ service instance)
 #   - titan-ai         (GenAI on Tanzu — tanzu-gpt-oss-120b-v1025)
-#
-# External Services (off-platform):
-#   - Greenplum Database (configured via user-provided service)
+#   - titan-pg         (Tanzu Postgres on-demand-postgres-db — temp until Greenplum is available)
 #
 # Usage:
 #   cf push -f cf-manifests/manifest.yml --vars-file cf-manifests/vars.yml
@@ -38,9 +36,9 @@ applications:
       MAINTENANCE_URL: http://titan-maintenance-agent.apps.internal:8080
     services:
       - titan-ai
-      - titan-greenplum-ups
-    routes:
-      - route: titan-orchestrator.((apps-domain))
+      - titan-pg
+    # routes:
+    #   - route: titan-orchestrator.((apps-domain))
     health-check-type: http
     health-check-http-endpoint: /actuator/health
 
@@ -62,7 +60,7 @@ applications:
       MQTT_ENABLED: "true"
     services:
       - titan-rabbitmq
-      - titan-greenplum-ups
+      - titan-pg
     routes:
       - route: titan-sensor-agent.apps.internal
     health-check-type: http
@@ -82,7 +80,7 @@ applications:
     services:
       - titan-rabbitmq
       - titan-gemfire
-      - titan-greenplum-ups
+      - titan-pg
     routes:
       - route: titan-maintenance-agent.apps.internal
     health-check-type: http
@@ -100,7 +98,7 @@ applications:
       JAVA_OPTS: -Djava.security.egd=file:///dev/urandom
       SPRING_PROFILES_ACTIVE: cloud
     services:
-      - titan-greenplum-ups
+      - titan-pg
     routes:
       - route: titan-inventory-agent.apps.internal
     health-check-type: http
@@ -118,7 +116,7 @@ applications:
       JAVA_OPTS: -Djava.security.egd=file:///dev/urandom
       SPRING_PROFILES_ACTIVE: cloud
     services:
-      - titan-greenplum-ups
+      - titan-pg
     routes:
       - route: titan-logistics-agent.apps.internal
     health-check-type: http

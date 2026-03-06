@@ -2,14 +2,14 @@
 # Cloud Foundry Profile — Inventory MCP Server
 # =============================================================================
 # Activated by: SPRING_PROFILES_ACTIVE=cloud
-# Reads credentials from VCAP_SERVICES bound services
+# DB: titan-pg (Tanzu Postgres on-demand)
 # =============================================================================
 
 spring:
   datasource:
-    url: ${vcap.services.titan-greenplum-ups.credentials.uri}
-    username: ${vcap.services.titan-greenplum-ups.credentials.username}
-    password: ${vcap.services.titan-greenplum-ups.credentials.password}
+    url: ${vcap.services.titan-pg.credentials.jdbc-url}
+    username: ${vcap.services.titan-pg.credentials.username}
+    password: ${vcap.services.titan-pg.credentials.password}
 
 server:
   port: 8080

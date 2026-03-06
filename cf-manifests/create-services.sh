@@ -97,23 +97,14 @@ fi
 echo ""
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4. Greenplum User-Provided Service
+# 4. Postgres Service (temporary — replace with Greenplum UPS when GP is ready)
 # ─────────────────────────────────────────────────────────────────────────────
-echo "[4/4] Creating Greenplum user-provided service: titan-greenplum-ups"
-if cf service titan-greenplum-ups > /dev/null 2>&1; then
+echo "[4/4] Creating Postgres service: titan-pg"
+if cf service titan-pg > /dev/null 2>&1; then
     echo "      → Already exists, skipping"
-    echo "      → To update credentials, run:"
-    echo "         cf update-user-provided-service titan-greenplum-ups -p '{...}'"
 else
-    cf create-user-provided-service titan-greenplum-ups -p "{
-        \"uri\": \"jdbc:postgresql://${GREENPLUM_HOST}:${GREENPLUM_PORT}/${GREENPLUM_DATABASE}\",
-        \"hostname\": \"${GREENPLUM_HOST}\",
-        \"port\": \"${GREENPLUM_PORT}\",
-        \"database\": \"${GREENPLUM_DATABASE}\",
-        \"username\": \"${GREENPLUM_USER}\",
-        \"password\": \"${GREENPLUM_PASSWORD}\"
-    }"
-    echo "      → Created"
+    cf create-service postgres on-demand-postgres-db titan-pg
+    echo "      → Created (provisioning asynchronously)"
 fi
 echo ""
 
@@ -127,7 +118,7 @@ echo ""
 cf services
 echo ""
 echo "Next steps:"
-echo "  1. Wait for titan-gemfire to finish provisioning (cf service titan-gemfire)"
+echo "  1. Wait for async services to finish provisioning (cf service titan-pg, titan-gemfire)"
 echo "  2. Build applications: ./build-apps.sh"
 echo "  3. Deploy applications: cf push -f cf-manifests/manifest.yml"
 echo ""

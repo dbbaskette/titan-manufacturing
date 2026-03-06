@@ -25,8 +25,7 @@
 # Configuration (edit before running):
 #   See the CONFIGURATION section below, or set env vars:
 #     APPS_DOMAIN          (optional — auto-detected from foundation if not set)
-#     GREENPLUM_HOST, GREENPLUM_PORT, GREENPLUM_DATABASE,
-#     GREENPLUM_USER, GREENPLUM_PASSWORD,
+#     (Greenplum UPS replaced by titan-pg Tanzu Postgres until GP is available)
 #     GEMFIRE_SERVICE, GEMFIRE_PLAN,
 #     RABBITMQ_SERVICE, RABBITMQ_PLAN,
 #     GENAI_SERVICE, GENAI_PLAN
@@ -47,13 +46,6 @@ CF_SPACE="${CF_SPACE:-titan}"
 # APPS_DOMAIN is auto-detected from the foundation after CF login.
 # Override by setting this env var if auto-detection picks the wrong domain.
 APPS_DOMAIN="${APPS_DOMAIN:-}"
-
-# Greenplum (off-platform) connection details
-GREENPLUM_HOST="${GREENPLUM_HOST:-greenplum.example.com}"
-GREENPLUM_PORT="${GREENPLUM_PORT:-5432}"
-GREENPLUM_DATABASE="${GREENPLUM_DATABASE:-titan-manufacturing}"
-GREENPLUM_USER="${GREENPLUM_USER:-gpadmin}"
-GREENPLUM_PASSWORD="${GREENPLUM_PASSWORD:-CHANGE_ME}"
 
 # Service plan names — check `cf marketplace` for available plans on your foundation
 GEMFIRE_SERVICE="${GEMFIRE_SERVICE:-p-cloudcache}"
@@ -209,10 +201,6 @@ else
     ok "Using provided apps domain: $APPS_DOMAIN"
 fi
 
-# Check Greenplum credentials are configured
-if [ "$GREENPLUM_PASSWORD" = "CHANGE_ME" ]; then
-    warn "GREENPLUM_PASSWORD is still CHANGE_ME — update it before deploying"
-fi
 
 # Check OpenAI API key is set (used as credential for the GenAI proxy)
 if [ -z "$OPENAI_API_KEY" ]; then
@@ -227,7 +215,7 @@ ok "Pre-flight complete"
 
 if [ "$SKIP_SERVICES" = true ]; then
     step "Create Services (SKIPPED)"
-    info "Using --skip-services, assuming titan-gemfire, titan-rabbitmq, titan-ai, titan-greenplum-ups exist"
+    info "Using --skip-services, assuming titan-gemfire, titan-rabbitmq, titan-ai, titan-pg exist"
 else
     step "Create Platform Services"
 
@@ -258,20 +246,13 @@ else
         ok "titan-ai created"
     fi
 
-    # Greenplum user-provided
-    info "Creating titan-greenplum-ups (user-provided)..."
-    if cf service titan-greenplum-ups > /dev/null 2>&1; then
-        ok "titan-greenplum-ups already exists"
+    # Postgres (temporary until Greenplum is available)
+    info "Creating titan-pg (postgres / on-demand-postgres-db)..."
+    if cf service titan-pg > /dev/null 2>&1; then
+        ok "titan-pg already exists"
     else
-        cf create-user-provided-service titan-greenplum-ups -p "{
-            \"uri\":      \"jdbc:postgresql://${GREENPLUM_HOST}:${GREENPLUM_PORT}/${GREENPLUM_DATABASE}\",
-            \"hostname\": \"${GREENPLUM_HOST}\",
-            \"port\":     \"${GREENPLUM_PORT}\",
-            \"database\": \"${GREENPLUM_DATABASE}\",
-            \"username\": \"${GREENPLUM_USER}\",
-            \"password\": \"${GREENPLUM_PASSWORD}\"
-        }"
-        ok "titan-greenplum-ups created"
+        cf create-service postgres on-demand-postgres-db titan-pg
+        ok "titan-pg created (provisioning asynchronously)"
     fi
 
     # ── Wait for all async services to finish provisioning ────────────────────
@@ -320,7 +301,7 @@ else
 
     # Check each async service — skip if it was already present (idempotent run)
     PROVISION_FAILED=false
-    for SVC in titan-gemfire titan-rabbitmq titan-ai; do
+    for SVC in titan-gemfire titan-rabbitmq titan-ai titan-pg; do
         STATE=$(service_state "$SVC")
         if echo "$STATE" | grep -qi "in progress"; then
             wait_for_service "$SVC" || PROVISION_FAILED=true
