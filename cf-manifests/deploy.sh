@@ -386,12 +386,12 @@ else
         fi
     }
 
-    check_artifact "titan-orchestrator/target/titan-orchestrator-1.0.0-SNAPSHOT.jar"       "titan-orchestrator"
-    check_artifact "sensor-mcp-server/target/sensor-mcp-server-1.0.0-SNAPSHOT.jar"         "sensor-mcp-server"
-    check_artifact "maintenance-mcp-server/target/maintenance-mcp-server-1.0.0-SNAPSHOT.jar" "maintenance-mcp-server"
-    check_artifact "inventory-mcp-server/target/inventory-mcp-server-1.0.0-SNAPSHOT.jar"   "inventory-mcp-server"
-    check_artifact "logistics-mcp-server/target/logistics-mcp-server-1.0.0-SNAPSHOT.jar"   "logistics-mcp-server"
-    check_artifact "sensor-data-generator/target/sensor-data-generator-1.0.0-SNAPSHOT.jar" "sensor-data-generator"
+    check_artifact "titan-orchestrator/target/titan-orchestrator.jar"       "titan-orchestrator"
+    check_artifact "sensor-mcp-server/target/sensor-mcp-server.jar"         "sensor-mcp-server"
+    check_artifact "maintenance-mcp-server/target/maintenance-mcp-server.jar" "maintenance-mcp-server"
+    check_artifact "inventory-mcp-server/target/inventory-mcp-server.jar"   "inventory-mcp-server"
+    check_artifact "logistics-mcp-server/target/logistics-mcp-server.jar"   "logistics-mcp-server"
+    check_artifact "sensor-data-generator/target/sensor-data-generator.jar" "sensor-data-generator"
 
     if [ -f "$PROJECT_ROOT/titan-dashboard/dist/index.html" ]; then
         ok "titan-dashboard (dist/)"
@@ -431,12 +431,25 @@ ok "vars.yml written (apps-domain: ${APPS_DOMAIN})"
 # STEP 5: PUSH APPLICATIONS
 # ─────────────────────────────────────────────────────────────────────────────
 
-step "Push Applications to CF"
-cd "$PROJECT_ROOT"
-info "Running cf push..."
-cf push -f cf-manifests/manifest.yml --vars-file cf-manifests/vars.yml
+# ─────────────────────────────────────────────────────────────────────────────
+# STEP 5: PUSH AGENTS + SUPPORTING APPS (before orchestrator)
+# ─────────────────────────────────────────────────────────────────────────────
+# The orchestrator connects to agents at startup via .apps.internal DNS.
+# Agents must be running and network policies in place before the orchestrator
+# starts, otherwise MCP client initialization will fail with UnresolvedAddressException.
 
-ok "All applications pushed"
+step "Push Agents and Supporting Apps"
+cd "$PROJECT_ROOT"
+info "Pushing MCP agents, sensor generator, and dashboard first..."
+cf push -f cf-manifests/manifest.yml --vars-file cf-manifests/vars.yml \
+    --app titan-sensor-agent \
+    --app titan-maintenance-agent \
+    --app titan-inventory-agent \
+    --app titan-logistics-agent \
+    --app titan-sensor-generator \
+    --app titan-dashboard
+
+ok "Agents and supporting apps pushed"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 6: NETWORK POLICIES
@@ -466,7 +479,19 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STEP 7: VERIFY DEPLOYMENT
+# STEP 7: PUSH ORCHESTRATOR (after agents are up and policies are set)
+# ─────────────────────────────────────────────────────────────────────────────
+
+step "Push Orchestrator"
+cd "$PROJECT_ROOT"
+info "Pushing titan-orchestrator (agents must be reachable now)..."
+cf push -f cf-manifests/manifest.yml --vars-file cf-manifests/vars.yml \
+    --app titan-orchestrator
+
+ok "titan-orchestrator pushed"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STEP 8: VERIFY DEPLOYMENT
 # ─────────────────────────────────────────────────────────────────────────────
 
 if [ "$SKIP_VERIFY" = true ]; then

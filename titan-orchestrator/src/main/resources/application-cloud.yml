@@ -14,6 +14,11 @@ spring:
       chat:
         options:
           model: ${vcap.services.titan-ai.credentials.model:tanzu-gpt-oss-120b}
+    mcp:
+      client:
+        # Do not crash on startup if agents are not yet reachable —
+        # the retry config in application.yml will reconnect once they are up
+        initialization-failed-fast: false
 
 server:
   port: 8080
