@@ -17,21 +17,31 @@ spring:
       - com.embabel.agent.autoconfigure.models.anthropic.AgentAnthropicAutoConfiguration
   ai:
     openai:
-      api-key: ${vcap.services.titan-ai.credentials.api-key:${OPENAI_API_KEY:}}
-      base-url: ${vcap.services.titan-ai.credentials.url:https://api.openai.com}
+      # GenAI on Tanzu provides credentials via VCAP_SERVICES under 'titan-ai'
+      # api_key and api_base are the standard credential fields from the GenAI service broker
+      api-key: ${vcap.services.titan-ai.credentials.api_key:${OPENAI_API_KEY:}}
+      base-url: ${vcap.services.titan-ai.credentials.api_base:${OPENAI_BASE_URL:https://api.openai.com}}
       chat:
         options:
-          model: ${vcap.services.titan-ai.credentials.model:tanzu-gpt-oss-120b}
+          model: ${vcap.services.titan-ai.credentials.model_name:openai/gpt-oss-120b}
     mcp:
       client:
         # Do not auto-initialize connections at startup — prevents crash if
         # agents are not yet reachable. Connections are made on first tool call.
         initialized: false
 
-# Embabel: use openai as the only model provider on CF
+# Embabel reads OPENAI_API_KEY / OPENAI_BASE_URL from env vars directly.
+# These are set in manifest.yml from vars.yml (extracted from titan-ai service-key).
+# Also set via Spring properties as fallback.
 embabel:
+  agent:
+    platform:
+      models:
+        openai:
+          api-key: ${OPENAI_API_KEY:}
+          base-url: ${OPENAI_BASE_URL:https://api.openai.com}
   models:
-    default-llm: tanzu-gpt-oss-120b
+    default-llm: openai/gpt-oss-120b
 
 server:
   port: 8080

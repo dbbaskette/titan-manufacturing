@@ -34,6 +34,9 @@ applications:
       MCP_SERVERS_INVENTORY: http://titan-inventory-agent.apps.internal:8080
       MCP_SERVERS_LOGISTICS: http://titan-logistics-agent.apps.internal:8080
       MAINTENANCE_URL: http://titan-maintenance-agent.apps.internal:8080
+      # Embabel framework reads OPENAI_API_KEY directly from env — set from titan-ai VCAP binding
+      OPENAI_API_KEY: ((openai-api-key))
+      OPENAI_BASE_URL: ((openai-base-url))
     services:
       - titan-ai
       - titan-pg
