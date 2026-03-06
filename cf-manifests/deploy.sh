@@ -395,27 +395,7 @@ fi
 step "Update vars.yml"
 cd "$PROJECT_ROOT"
 
-# Extract GenAI credentials via a temporary cf service-key so Embabel can
-# read OPENAI_API_KEY / OPENAI_BASE_URL directly (Embabel bypasses spring.ai.openai.*)
-info "Extracting titan-ai credentials via service-key..."
-TMP_SK="deploy-vars-sk-$$"
-cf create-service-key titan-ai "$TMP_SK" > /dev/null 2>&1 || true
-SK_JSON=$(cf service-key titan-ai "$TMP_SK" 2>/dev/null | tail -n +3)
-cf delete-service-key titan-ai "$TMP_SK" -f > /dev/null 2>&1 || true
-
-GENAI_API_KEY_VAL=$(echo "$SK_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('api_key', d.get('api-key', '')))" 2>/dev/null)
-GENAI_BASE_URL_VAL=$(echo "$SK_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('url', d.get('base_url', 'https://api.openai.com')))" 2>/dev/null)
-
-# Fallback to env var if service-key extraction fails
-if [ -z "$GENAI_API_KEY_VAL" ]; then
-    warn "Could not extract titan-ai api-key from service-key — falling back to OPENAI_API_KEY env var"
-    GENAI_API_KEY_VAL="${OPENAI_API_KEY:-MISSING_API_KEY}"
-fi
-[ -z "$GENAI_BASE_URL_VAL" ] && GENAI_BASE_URL_VAL="https://api.openai.com"
-
-info "GenAI base URL: $GENAI_BASE_URL_VAL"
-
-# Write vars.yml with all substitution values
+# Write vars.yml — only non-secret values; credentials come from VCAP_SERVICES at runtime
 cat > cf-manifests/vars.yml << EOF
 # =============================================================================
 # TITAN MANUFACTURING — Cloud Foundry Variables
@@ -424,8 +404,6 @@ cat > cf-manifests/vars.yml << EOF
 # =============================================================================
 
 apps-domain: ${APPS_DOMAIN}
-openai-api-key: ${GENAI_API_KEY_VAL}
-openai-base-url: ${GENAI_BASE_URL_VAL}
 EOF
 
 ok "vars.yml written (apps-domain: ${APPS_DOMAIN})"
