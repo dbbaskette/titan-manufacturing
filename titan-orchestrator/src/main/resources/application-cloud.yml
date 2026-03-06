@@ -11,6 +11,10 @@ spring:
     url: ${vcap.services.titan-pg.credentials.jdbc-url}
     username: ${vcap.services.titan-pg.credentials.username}
     password: ${vcap.services.titan-pg.credentials.password}
+  autoconfigure:
+    # Disable Embabel's Anthropic wiring — no Anthropic key available on CF
+    exclude:
+      - com.embabel.agent.autoconfigure.models.anthropic.AgentAnthropicAutoConfiguration
   ai:
     openai:
       api-key: ${vcap.services.titan-ai.credentials.api-key:${OPENAI_API_KEY:}}
@@ -23,6 +27,11 @@ spring:
         # Do not auto-initialize connections at startup — prevents crash if
         # agents are not yet reachable. Connections are made on first tool call.
         initialized: false
+
+# Embabel: use openai as the only model provider on CF
+embabel:
+  models:
+    default-llm: tanzu-gpt-oss-120b
 
 server:
   port: 8080
