@@ -274,34 +274,73 @@ else
         ok "titan-greenplum-ups created"
     fi
 
-    # ── Wait for GemFire to provision ─────────────────────────────────────────
-    step "Wait for GemFire Provisioning"
-    info "GemFire can take several minutes to provision. Polling every 15s..."
+    # ── Wait for all async services to finish provisioning ────────────────────
+    step "Wait for Services to Provision"
 
-    GEMFIRE_TIMEOUT=600  # 10 minutes max
-    GEMFIRE_ELAPSED=0
+    # Returns the last-operation state for a service: "create succeeded",
+    # "create in progress", "create failed", or empty if unknown.
+    service_state() {
+        cf service "$1" 2>/dev/null \
+            | grep -E "^(status:|last operation)" \
+            | head -1 \
+            | sed 's/^status:[[:space:]]*//' \
+            | sed 's/^last operation[[:space:]]*//' \
+            | xargs
+    }
 
-    while true; do
-        STATUS=$(cf service titan-gemfire 2>/dev/null | grep -E "^status:" | awk '{print $2, $3, $4}' | xargs)
+    wait_for_service() {
+        local SVC="$1"
+        local TIMEOUT=900   # 15 minutes — RabbitMQ on-demand can be slow
+        local ELAPSED=0
 
-        if echo "$STATUS" | grep -q "create succeeded"; then
-            ok "titan-gemfire is ready ($STATUS)"
-            break
-        elif echo "$STATUS" | grep -q "create failed"; then
-            fail "titan-gemfire provisioning failed: $STATUS"
-            echo "  Check: cf service titan-gemfire"
-            exit 1
-        elif [ $GEMFIRE_ELAPSED -ge $GEMFIRE_TIMEOUT ]; then
-            fail "Timed out waiting for titan-gemfire after ${GEMFIRE_TIMEOUT}s (status: $STATUS)"
-            echo "  Check manually: cf service titan-gemfire"
-            echo "  Then re-run with --skip-services --skip-build"
-            exit 1
+        info "Waiting for $SVC to finish provisioning..."
+        while true; do
+            local STATE
+            STATE=$(service_state "$SVC")
+
+            if echo "$STATE" | grep -qi "succeeded"; then
+                ok "$SVC is ready"
+                return 0
+            elif echo "$STATE" | grep -qi "failed"; then
+                fail "$SVC provisioning failed (state: $STATE)"
+                echo "  Check: cf service $SVC"
+                return 1
+            elif [ $ELAPSED -ge $TIMEOUT ]; then
+                fail "Timed out waiting for $SVC after ${TIMEOUT}s (state: $STATE)"
+                echo "  Check manually: cf service $SVC"
+                echo "  Re-run with --skip-services --skip-build once ready"
+                return 1
+            else
+                info "$SVC — $STATE (${ELAPSED}s elapsed, checking again in 20s...)"
+                sleep 20
+                ELAPSED=$((ELAPSED + 20))
+            fi
+        done
+    }
+
+    # Check each async service — skip if it was already present (idempotent run)
+    PROVISION_FAILED=false
+    for SVC in titan-gemfire titan-rabbitmq titan-ai; do
+        STATE=$(service_state "$SVC")
+        if echo "$STATE" | grep -qi "in progress"; then
+            wait_for_service "$SVC" || PROVISION_FAILED=true
+        elif echo "$STATE" | grep -qi "succeeded"; then
+            ok "$SVC already ready"
+        elif echo "$STATE" | grep -qi "failed"; then
+            fail "$SVC is in a failed state — check: cf service $SVC"
+            PROVISION_FAILED=true
         else
-            info "Status: $STATUS — waiting 15s... (${GEMFIRE_ELAPSED}s elapsed)"
-            sleep 15
-            GEMFIRE_ELAPSED=$((GEMFIRE_ELAPSED + 15))
+            warn "$SVC state unknown ('$STATE') — proceeding anyway"
         fi
     done
+
+    if [ "$PROVISION_FAILED" = true ]; then
+        echo ""
+        echo "ERROR: One or more services failed to provision. Aborting."
+        exit 1
+    fi
+
+    ok "All services ready"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
