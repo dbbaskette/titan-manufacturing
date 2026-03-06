@@ -74,12 +74,12 @@ check_artifact() {
     fi
 }
 
-check_artifact "titan-orchestrator/target/titan-orchestrator-1.0.0-SNAPSHOT.jar" "titan-orchestrator"
-check_artifact "sensor-mcp-server/target/sensor-mcp-server-1.0.0-SNAPSHOT.jar" "sensor-mcp-server"
-check_artifact "maintenance-mcp-server/target/maintenance-mcp-server-1.0.0-SNAPSHOT.jar" "maintenance-mcp-server"
-check_artifact "inventory-mcp-server/target/inventory-mcp-server-1.0.0-SNAPSHOT.jar" "inventory-mcp-server"
-check_artifact "logistics-mcp-server/target/logistics-mcp-server-1.0.0-SNAPSHOT.jar" "logistics-mcp-server"
-check_artifact "sensor-data-generator/target/sensor-data-generator-1.0.0-SNAPSHOT.jar" "sensor-data-generator"
+check_artifact "titan-orchestrator/target/titan-orchestrator.jar" "titan-orchestrator"
+check_artifact "sensor-mcp-server/target/sensor-mcp-server.jar" "sensor-mcp-server"
+check_artifact "maintenance-mcp-server/target/maintenance-mcp-server.jar" "maintenance-mcp-server"
+check_artifact "inventory-mcp-server/target/inventory-mcp-server.jar" "inventory-mcp-server"
+check_artifact "logistics-mcp-server/target/logistics-mcp-server.jar" "logistics-mcp-server"
+check_artifact "sensor-data-generator/target/sensor-data-generator.jar" "sensor-data-generator"
 
 if [ -d "titan-dashboard/dist" ] && [ -f "titan-dashboard/dist/index.html" ]; then
     echo "  ✓ titan-dashboard (dist/)"

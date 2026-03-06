@@ -23,7 +23,7 @@ applications:
   - name: titan-orchestrator
     memory: 1G
     instances: 1
-    path: ../titan-orchestrator/target/titan-orchestrator-1.0.0-SNAPSHOT.jar
+    path: ../titan-orchestrator/target/titan-orchestrator.jar
     buildpacks:
       - java_buildpack_offline
     env:
@@ -52,7 +52,7 @@ applications:
   - name: titan-sensor-agent
     memory: 512M
     instances: 1
-    path: ../sensor-mcp-server/target/sensor-mcp-server-1.0.0-SNAPSHOT.jar
+    path: ../sensor-mcp-server/target/sensor-mcp-server.jar
     buildpacks:
       - java_buildpack_offline
     env:
@@ -72,7 +72,7 @@ applications:
   - name: titan-maintenance-agent
     memory: 768M
     instances: 1
-    path: ../maintenance-mcp-server/target/maintenance-mcp-server-1.0.0-SNAPSHOT.jar
+    path: ../maintenance-mcp-server/target/maintenance-mcp-server.jar
     buildpacks:
       - java_buildpack_offline
     env:
@@ -92,7 +92,7 @@ applications:
   - name: titan-inventory-agent
     memory: 512M
     instances: 1
-    path: ../inventory-mcp-server/target/inventory-mcp-server-1.0.0-SNAPSHOT.jar
+    path: ../inventory-mcp-server/target/inventory-mcp-server.jar
     buildpacks:
       - java_buildpack_offline
     env:
@@ -110,7 +110,7 @@ applications:
   - name: titan-logistics-agent
     memory: 512M
     instances: 1
-    path: ../logistics-mcp-server/target/logistics-mcp-server-1.0.0-SNAPSHOT.jar
+    path: ../logistics-mcp-server/target/logistics-mcp-server.jar
     buildpacks:
       - java_buildpack_offline
     env:
@@ -130,7 +130,7 @@ applications:
   - name: titan-sensor-generator
     memory: 256M
     instances: 1
-    path: ../sensor-data-generator/target/sensor-data-generator-1.0.0-SNAPSHOT.jar
+    path: ../sensor-data-generator/target/sensor-data-generator.jar
     buildpacks:
       - java_buildpack_offline
     env:
