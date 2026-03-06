@@ -180,18 +180,18 @@ cf target | grep -E 'api endpoint|org:|space:' | sed 's/^/  /'
 # ── Auto-detect apps domain from the foundation ───────────────────────────
 if [ -z "$APPS_DOMAIN" ]; then
     info "Auto-detecting apps domain from foundation..."
-    # `cf domains` lists shared domains; pick the first one containing "apps."
-    # Falls back to any shared domain if none match "apps."
+    # `cf domains` lists shared domains; pick the first shared domain that
+    # contains "apps." but is NOT the internal-only "apps.internal" domain
     DETECTED=$(cf domains 2>/dev/null \
-        | grep -v "^Getting\|^name\|^---\|private" \
+        | grep -v "^Getting\|^name\|^---\|private\|apps\.internal" \
         | awk '{print $1}' \
         | grep "^apps\." \
         | head -1)
 
     if [ -z "$DETECTED" ]; then
-        # Fallback: first shared domain listed
+        # Fallback: first shared domain that is not apps.internal
         DETECTED=$(cf domains 2>/dev/null \
-            | grep -v "^Getting\|^name\|^---\|private" \
+            | grep -v "^Getting\|^name\|^---\|private\|apps\.internal" \
             | awk '{print $1}' \
             | head -1)
     fi

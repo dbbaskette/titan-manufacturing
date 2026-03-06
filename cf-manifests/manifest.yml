@@ -21,13 +21,13 @@ applications:
   # TITAN ORCHESTRATOR — AI Agent Coordinator
   # ===========================================================================
   - name: titan-orchestrator
-    memory: 1G
+    memory: 1500M
     instances: 1
     path: ../titan-orchestrator/target/titan-orchestrator.jar
     buildpacks:
       - java_buildpack_offline
     env:
-      JBP_CONFIG_OPEN_JDK_JRE: '{ jre: { version: 21.+ } }'
+      JBP_CONFIG_OPEN_JDK_JRE: '{ jre: { version: 21.+ }, memory_calculator: { stack_threads: 50 } }'
       JAVA_OPTS: -Djava.security.egd=file:///dev/urandom
       SPRING_PROFILES_ACTIVE: cloud
       # MCP Server URLs (internal routes — http only, no TLS on .apps.internal)
@@ -50,13 +50,13 @@ applications:
 
   # Sensor Agent — IoT sensor data monitoring
   - name: titan-sensor-agent
-    memory: 512M
+    memory: 768M
     instances: 1
     path: ../sensor-mcp-server/target/sensor-mcp-server.jar
     buildpacks:
       - java_buildpack_offline
     env:
-      JBP_CONFIG_OPEN_JDK_JRE: '{ jre: { version: 21.+ } }'
+      JBP_CONFIG_OPEN_JDK_JRE: '{ jre: { version: 21.+ }, memory_calculator: { stack_threads: 50 } }'
       JAVA_OPTS: -Djava.security.egd=file:///dev/urandom
       SPRING_PROFILES_ACTIVE: cloud
       MQTT_ENABLED: "true"
@@ -76,7 +76,7 @@ applications:
     buildpacks:
       - java_buildpack_offline
     env:
-      JBP_CONFIG_OPEN_JDK_JRE: '{ jre: { version: 21.+ } }'
+      JBP_CONFIG_OPEN_JDK_JRE: '{ jre: { version: 21.+ }, memory_calculator: { stack_threads: 50 } }'
       JAVA_OPTS: -Djava.security.egd=file:///dev/urandom
       SPRING_PROFILES_ACTIVE: cloud
     services:
@@ -90,13 +90,13 @@ applications:
 
   # Inventory Agent — SKU and inventory management
   - name: titan-inventory-agent
-    memory: 512M
+    memory: 768M
     instances: 1
     path: ../inventory-mcp-server/target/inventory-mcp-server.jar
     buildpacks:
       - java_buildpack_offline
     env:
-      JBP_CONFIG_OPEN_JDK_JRE: '{ jre: { version: 21.+ } }'
+      JBP_CONFIG_OPEN_JDK_JRE: '{ jre: { version: 21.+ }, memory_calculator: { stack_threads: 50 } }'
       JAVA_OPTS: -Djava.security.egd=file:///dev/urandom
       SPRING_PROFILES_ACTIVE: cloud
     services:
@@ -108,13 +108,13 @@ applications:
 
   # Logistics Agent — Shipping and tracking
   - name: titan-logistics-agent
-    memory: 512M
+    memory: 768M
     instances: 1
     path: ../logistics-mcp-server/target/logistics-mcp-server.jar
     buildpacks:
       - java_buildpack_offline
     env:
-      JBP_CONFIG_OPEN_JDK_JRE: '{ jre: { version: 21.+ } }'
+      JBP_CONFIG_OPEN_JDK_JRE: '{ jre: { version: 21.+ }, memory_calculator: { stack_threads: 50 } }'
       JAVA_OPTS: -Djava.security.egd=file:///dev/urandom
       SPRING_PROFILES_ACTIVE: cloud
     services:
@@ -128,13 +128,13 @@ applications:
   # SENSOR DATA GENERATOR — Simulated IoT telemetry
   # ===========================================================================
   - name: titan-sensor-generator
-    memory: 256M
+    memory: 512M
     instances: 1
     path: ../sensor-data-generator/target/sensor-data-generator.jar
     buildpacks:
       - java_buildpack_offline
     env:
-      JBP_CONFIG_OPEN_JDK_JRE: '{ jre: { version: 21.+ } }'
+      JBP_CONFIG_OPEN_JDK_JRE: '{ jre: { version: 21.+ }, memory_calculator: { stack_threads: 50 } }'
       JAVA_OPTS: -Djava.security.egd=file:///dev/urandom
       SPRING_PROFILES_ACTIVE: cloud
       EQUIPMENT_COUNT: "72"
