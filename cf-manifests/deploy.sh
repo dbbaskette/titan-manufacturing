@@ -441,15 +441,12 @@ ok "vars.yml written (apps-domain: ${APPS_DOMAIN})"
 step "Push Agents and Supporting Apps"
 cd "$PROJECT_ROOT"
 info "Pushing MCP agents, sensor generator, and dashboard first..."
-cf push -f cf-manifests/manifest.yml --vars-file cf-manifests/vars.yml \
-    --app titan-sensor-agent \
-    --app titan-maintenance-agent \
-    --app titan-inventory-agent \
-    --app titan-logistics-agent \
-    --app titan-sensor-generator \
-    --app titan-dashboard
 
-ok "Agents and supporting apps pushed"
+for APP in titan-sensor-agent titan-maintenance-agent titan-inventory-agent titan-logistics-agent titan-sensor-generator titan-dashboard; do
+    info "Pushing $APP..."
+    cf push "$APP" -f cf-manifests/manifest.yml --vars-file cf-manifests/vars.yml
+    ok "$APP pushed"
+done
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 6: NETWORK POLICIES
@@ -485,9 +482,7 @@ fi
 step "Push Orchestrator"
 cd "$PROJECT_ROOT"
 info "Pushing titan-orchestrator (agents must be reachable now)..."
-cf push -f cf-manifests/manifest.yml --vars-file cf-manifests/vars.yml \
-    --app titan-orchestrator
-
+cf push titan-orchestrator -f cf-manifests/manifest.yml --vars-file cf-manifests/vars.yml
 ok "titan-orchestrator pushed"
 
 # ─────────────────────────────────────────────────────────────────────────────
